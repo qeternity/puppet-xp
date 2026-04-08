@@ -1,0 +1,118 @@
+[
+  {
+    "id": "filehelper",
+    "name": "File Transfer",
+    "native_labels": [
+      "文件传输助手",
+      "filehelper"
+    ],
+    "confidence": "high",
+    "sources": [
+      "sqlite-like label leaf page cell 17",
+      "live row slot row+0x248",
+      "focused live co-occurrence"
+    ]
+  },
+  {
+    "id": "weixin",
+    "name": "WeChat Team",
+    "native_labels": [
+      "微信团队",
+      "weixin"
+    ],
+    "confidence": "high",
+    "sources": [
+      "sqlite-like label leaf page cell 16",
+      "live row slot row+0x248",
+      "focused live co-occurrence"
+    ]
+  },
+  {
+    "id": "wxid_yfe3gm54e5il12",
+    "name": "Chase",
+    "vanity_id": "zumalabs",
+    "native_labels": [
+      "Chase",
+      "zumalabs"
+    ],
+    "confidence": "high",
+    "sources": [
+      "sqlite-like label leaf page cell 10",
+      "live row slot row+0x248",
+      "focused live packed record",
+      "user confirmation"
+    ]
+  },
+  {
+    "id": "wxid_3a40v7q8y4kk12",
+    "name": "Glenn",
+    "confidence": "high",
+    "sources": [
+      "sqlite-like label leaf page cell 4",
+      "live row slot row+0x248",
+      "user confirmation"
+    ]
+  },
+  {
+    "id": "wxid_cdxvsfdqlbqw22",
+    "name": "Adam - Arrow FFAs",
+    "confidence": "high",
+    "sources": [
+      "sqlite-like label leaf page cell 8",
+      "focused live co-occurrence",
+      "live nested row label path",
+      "user confirmation"
+    ]
+  },
+  {
+    "id": "wxid_jh7tgf4ggsgs22",
+    "name": "Heng Chen 陳亨",
+    "confidence": "high",
+    "sources": [
+      "sqlite-like label leaf page cell 6",
+      "live row slot row+0x248",
+      "focused live co-occurrence",
+      "user confirmation"
+    ]
+  },
+  {
+    "id": "wxid_shj82mm92ok622",
+    "name": "Oli",
+    "confidence": "high",
+    "sources": [
+      "sqlite-like label leaf page cell 3",
+      "live row slot row+0x248",
+      "focused live packed artifact",
+      "user confirmation"
+    ]
+  },
+  {
+    "id": "wxid_ulr3oq29ruo312",
+    "name": "Max Nijhawan",
+    "vanity_id": "MNijhawan9",
+    "extra": {
+      "location": "United Kingdom"
+    },
+    "confidence": "medium-high",
+    "sources": [
+      "sqlite-like label leaf page cell 5",
+      "live row slot row+0x248",
+      "focused live row-local inference"
+    ],
+    "notes": [
+      "name currently depends in part on a mixed conversation/contact label cache"
+    ]
+  },
+  {
+    "id": "wxid_j6362wqv6yqf22",
+    "name": "Simon",
+    "confidence": "high",
+    "sources": [
+      "sqlite-like label leaf page cell 14",
+      "focused live co-occurrence"
+    ],
+    "notes": [
+      "source cache is now understood to be mixed session/contact data"
+    ]
+  }
+]

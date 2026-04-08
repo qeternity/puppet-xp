@@ -68,3 +68,5 @@ cache/*
 # src/init-agent-script.ts
 examples/file/*
 examples/media/*
+
+releases/*
