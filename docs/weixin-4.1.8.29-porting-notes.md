@@ -1758,3 +1758,1201 @@ two native paths:
    latest message preview/metadata per conversation
 2. identify the real message-store iterator/query object behind the live
    `message_content` / `user_name` / `create_time` schema block
+
+### Glenn Historical Message Anchor: `howdy`
+
+The user provided an older Glenn direct-message text anchor:
+
+- talker: `wxid_3a40v7q8y4kk12`
+- title: `Glenn`
+- older message text: `howdy`
+
+A live scan of the running `Weixin.exe` found **two** resident `howdy` hits.
+
+The stronger hit is in a Glenn-adjacent region:
+
+- Glenn id hit: `0x18816a13e30`
+- nearby `howdy` hit: `0x18816a14040`
+- second nearby `howdy` copy: `0x18816a14580`
+
+Important interpretation:
+
+- the user confirmed there is only **one logical `howdy` message**, so these two
+  hits are duplicate in-memory copies of the same message, not two distinct
+  `howdy` messages
+- this is still stronger than the latest-message-only anchor because it shows an
+  older Glenn message still resident in memory
+- the `wxid_3a40v7q8y4kk12` id and `howdy` co-reside in the same live region,
+  which is good evidence that the process currently holds more than just a
+  single latest-message preview for Glenn
+- this still does **not** prove full-history enumeration, but it does prove
+  that at least one older Glenn message is present in reachable live memory
+
+### Glenn Historical Message Anchor: `test123`
+
+The user provided the next Glenn message after `howdy`:
+
+- talker: `wxid_3a40v7q8y4kk12`
+- title: `Glenn`
+- message text: `test123`
+
+A live scan found **two** resident `test123` hits:
+
+- `0x188172d78d0`
+- `0x18819f611e8`
+
+Current interpretation:
+
+- `test123` is resident in memory, so it is another valid Glenn-history anchor
+- unlike `howdy`, the recovered `test123` copies do **not** currently co-locate
+  with the previously identified Glenn-adjacent region around
+  `0x18816a13e30 .. 0x18816a15618`
+- this suggests the process is holding message text in multiple layers/copies
+  rather than a single simple per-conversation contiguous string blob
+- in practice, that strengthens the case that we need the real native query
+  object / iterator instead of relying on spatial string correlation alone
+
+### First Verified Native Message Iterator Hit
+
+The dedicated `FUN_1813ff7c0` iterator monitor eventually fired and produced a
+real native message vector.
+
+Important live result:
+
+- query object: `0x18817367868`
+- vector begin: `0x1881a307260`
+- vector end: `0x1881a307780`
+- row count: `2`
+- parsed row size: `0x290`
+
+Recovered rows:
+
+1. row `0x1881a307260`
+   - sender / user field (`+0x18`): `wxid_yfe3gm54e5il12`
+   - talker / conversation field (`+0x38`): `27208021116@chatroom`
+   - secondary sender field (`+0x58`): `wxid_yfe3gm54e5il12`
+   - message body (`+0x180`): `test456`
+   - candidate create-time field (`+0x124`): `1774899720`
+     - UTC: `2026-03-30 19:42:00`
+     - London: `2026-03-30 20:42:00 +01:00`
+
+2. row `0x1881a3074f0`
+   - sender / user field (`+0x18`): `wxid_yfe3gm54e5il12`
+   - talker / conversation field (`+0x38`): `27208021116@chatroom`
+   - secondary sender field (`+0x58`): `wxid_yfe3gm54e5il12`
+   - message body (`+0x180`): `yo yo`
+   - candidate create-time field (`+0x124`): `1774886757`
+     - UTC: `2026-03-30 16:05:57`
+     - London: `2026-03-30 17:05:57 +01:00`
+
+High-confidence interpretation:
+
+- `FUN_1813ff7c0` is a real native message iterator / materializer
+- the parsed message row struct exposes at least:
+  - talker / conversation id at `+0x38`
+  - message content at `+0x180`
+  - sender/self-like fields at `+0x18` and `+0x58`
+  - candidate create time at `+0x124`
+- for the recovered `Zuma Internal` rows, both `+0x18` and `+0x58` equal the
+  already verified self id `wxid_yfe3gm54e5il12`, so the current best
+  interpretation is that `yo yo` and `test456` were sent by the logged-in self
+  account (`Chase` / vanity `zumalabs`)
+- `yo yo` was **not** found by a broad string scan while Glenn was selected, but
+  it **was** recovered by the native iterator path, which is exactly the kind of
+  distinction we were looking for
+
+### Full Glenn Conversation Recovery From Native Iterator
+
+After switching back into the Glenn direct conversation, the same native
+iterator path (`FUN_1813ff7c0`) produced Glenn-specific message vectors.
+
+The recovered row layout remained consistent:
+
+- sender / user field: `+0x18`
+- talker / conversation id: `+0x38`
+- secondary sender-like field: `+0x58`
+- optional msgsource XML: `+0x140`
+- message body: `+0x180`
+- candidate create time: `+0x124`
+
+Recovered Glenn conversation id:
+
+- `wxid_3a40v7q8y4kk12`
+
+Recovered Glenn history, oldest to newest:
+
+1. `2025-11-25 14:40:03 +01:00` — sender `self` — body `test`
+2. `2025-11-25 14:41:53 +01:00` — sender `self` — body `test 2`
+3. `2025-11-25 14:47:59 +01:00` — sender `self` — body `test 3`
+4. `2025-11-25 14:49:27 +01:00` — sender `Glenn` — body `Ack`
+5. `2026-03-30 17:05:26 +01:00` — sender `self` — body `test`
+6. `2026-03-30 17:05:37 +01:00` — sender `self` — body `howdy`
+7. `2026-03-30 20:36:12 +01:00` — sender `self` — body `test123`
+8. `2026-03-30 20:42:00 +01:00` — sender `self` — body `test456`
+9. `2026-04-08 17:38:18 +01:00` — sender `self` — body `latest message 20260408`
+10. `2026-04-08 17:52:18 +01:00` — sender `self` — body `message probe 20260408b`
+11. `2026-04-08 17:58:51 +01:00` — sender `self` — body `message probe 20260408c`
+
+Sender interpretation:
+
+- rows where `+0x18` and `+0x58` equal `wxid_yfe3gm54e5il12` are currently
+  interpreted as `self`
+- the recovered `Ack` row has `+0x18` and `+0x58` equal
+  `wxid_3a40v7q8y4kk12`, so it is currently interpreted as sent by `Glenn`
+
+Current significance:
+
+- we now have a verified native message iterator that can return structured
+  message rows including conversation id, sender identity, message body, and
+  timestamp
+- this is no longer just heuristic memory scraping; it is useful native
+  extraction evidence for the eventual `4.1.8.29` port
+
+### All-Messages Retrieval Strategy
+
+The current Glenn/Zuma Internal wins are **not** yet the final goal. They prove
+that the native message-row iterator exists and that the row layout is usable,
+but they do not yet give an app-wide message dump by themselves.
+
+Current best model:
+
+1. there is a native conversation/session enumeration path
+2. there is a native per-conversation message iterator / materializer
+3. the missing link is direct control of the query object / paging path so we
+   can invoke the iterator for any talker without relying on whichever
+   conversation the UI has already loaded
+
+Practical end-state design:
+
+1. enumerate all conversations
+   - use the existing conversation recovery path to get all talker ids
+   - this gives the set of per-conversation keys to query
+
+2. build a per-conversation message query object
+   - target the `FUN_1813ff7c0` family and its wrappers
+   - recover which query-object fields hold:
+     - target talker id
+     - page size / range size
+     - cursor / offset / window
+     - filter flags
+
+3. iterate until exhaustion
+   - call the per-conversation iterator repeatedly
+   - use `local_id`, `server_id`, `server_seq`, or row-count exhaustion as the
+     stopping condition
+
+4. normalize rows into a stable exported schema
+   - talker id
+   - sender id
+   - create time
+   - body
+   - local/server ids
+   - message type / status
+   - optional source/msgsource metadata
+
+5. aggregate across all conversations
+   - flatten all per-conversation pages into a global message list
+   - dedupe by `server_id` / `local_id`
+
+High-value functions for the next pass:
+
+- `FUN_1813ff7c0`
+  - confirmed message iterator / row materializer
+- `FUN_181405470`
+  - higher-level wrapper around the same iterator family
+- `FUN_181411990`
+  - another higher-level wrapper that appears to manage larger/batched flows
+- `FUN_181403030`
+  - helper that appears to build query/model state from parameters including
+    range-like values
+- `FUN_181404a00`
+  - vector merge/insert helper for `0x290` message rows
+- `FUN_1809aee00`
+  - canonical message schema builder
+
+Concrete next RE objective:
+
+- identify the exact query-object layout passed into the `FUN_1813ff7c0` family
+  so we can set the talker id and paging controls ourselves
+- once that is pinned, the path to “all conversations -> all messages” becomes
+  implementation work rather than ad hoc live observation
+
+### Query-Object Layout Progress
+
+The `FUN_1813ff7c0` query object is now less opaque than it was earlier.
+
+Strongly supported by combined live capture plus decompilation:
+
+- `param_1[0]`
+  - pointer to the talker-id string object, not an inline string in the query
+    struct itself
+  - live `iter_enter_layout` capture for Glenn showed:
+    - query object `0x18814318cc8`
+    - slot `+0x0` -> pointer `0x1881705b308`
+    - that pointed object decodes cleanly as `wxid_3a40v7q8y4kk12`
+- `param_1[1]`
+  - service / db / manager context used by `FUN_180e15710(param_1[1], ...)`
+- `param_1[2]`
+  - mode / kind byte or small enum used when building the schema-backed query
+- `param_1[3]`
+  - optional filter or range object
+  - only used if `*(int *)param_1[3] != 0`
+  - fed to `FUN_180e16fa0(..., param_1[3], 1)` and then folded into the query
+- `param_1[4]`
+  - another optional range / filter list
+  - treated as an iterable pair/range and folded via `FUN_1813d1570`
+- `param_1[5]`
+  - additional filter set passed through `FUN_180e16fa0(local_938, param_1[5], 1)`
+- `param_1[6]`
+  - cancellation / stop flag pointer
+  - inside the iterator loop:
+    - `if (*(byte **)puVar18[6] != 0 && (**(byte **)puVar18[6] & 1) != 0) break;`
+- `param_1[7]`
+  - destination vector for `0x290` message rows
+  - the iterator appends rows by reading the vector at `puVar18[7]`
+  - this matches the live monitor result that the row vector is effectively at
+    query-object offset `+0x38`
+
+Live Glenn query-layout capture (`queryObj = 0x18814318cc8`) also confirmed:
+
+- `+0x38`
+  - is the output vector pointer
+  - the pointed vector-like triple looked like:
+    - begin `0x1881a386260`
+    - end `0x1881a386260`
+    - cap `0x1881a38af40`
+  - at function entry it was empty, which is consistent with the iterator
+    filling it during execution
+- `+0x48`
+  - value `0` on the fresh Glenn entry
+- `+0x50`
+  - opaque packed scalar, still unresolved
+- `+0x58`
+  - context / vtable-ish pointer into module memory
+- `+0x60`
+  - `0` on the fresh Glenn entry
+
+### Wrapper Layout Progress
+
+`FUN_181405470` appears to be a higher-level message-query wrapper with a
+larger control object than the raw `FUN_1813ff7c0` iterator.
+
+Useful field hints from the decomp:
+
+- wrapper object `local_80[10]`
+  - destination vector for message rows
+  - later merged via `FUN_181404a00(local_80[10], *(undefined8 *)(local_80[10] + 8), ...)`
+- wrapper object `local_80[5]` and `local_80[6]`
+  - numeric range controls when `*local_80[4] == 0`
+  - used like:
+    - `uVar2 = *(uint *)local_80[5]`
+    - `uVar13 = *(uint *)local_80[6]`
+    - converted into `start = min(uVar2, uVar13) * 1000`
+    - `end = (max(uVar2, uVar13) + 1) * 1000 - 1`
+  - this strongly suggests a bounded numeric window rather than a simple bool
+- wrapper object `local_80[9]`
+  - another optional filter set passed to `FUN_180e16fa0`
+
+Current interpretation:
+
+- `FUN_1813ff7c0` is still the canonical row materializer
+- but directly calling it is not enough yet because the richer query / cursor /
+  cancellation state normally comes from the wrapper path
+- the redirect / hijack strategy remains promising because it can reuse the
+  live wrapper-built query state on the correct thread
+
+### Redirect Attempt Status
+
+A first in-flight talker-redirection probe was built:
+
+- script:
+  - `scripts/redirect-weixin-message-query.py`
+- goal:
+  - wait for a real Glenn iterator call
+  - replace the talker string object in-place with another conversation id
+  - capture returned rows from the same live iterator call
+
+Status:
+
+- the redirector stayed attached and healthy
+- a single Glenn click after arming it did **not** produce a fresh iterator
+  event, so there was nothing to rewrite on that attempt
+- this does **not** invalidate the redirect idea; it just means the last UI
+  action did not force a new query on the monitored path
+
+### Clean-Restart Redirect Result
+
+After restarting Weixin cleanly and reattaching only:
+
+- `scripts/monitor-weixin-message-iterator.py`
+- `scripts/redirect-weixin-message-query.py`
+
+the in-flight redirect finally fired on a real live Glenn query.
+
+Verified redirect event:
+
+- source talker: `wxid_3a40v7q8y4kk12` (Glenn)
+- target talker: `wxid_cdxvsfdqlbqw22` (Adam - Arrow FFAs)
+- redirect log:
+  - `queryObj = 0x1ea952d4028`
+  - `dbCtx = 0x6360afe7f0`
+  - `originalTalker = wxid_3a40v7q8y4kk12`
+  - `rewrittenTalker = wxid_cdxvsfdqlbqw22`
+
+Result:
+
+- the redirected iterator returned successfully
+- but the output vector was empty:
+  - `begin == end`
+  - `count = 0`
+
+Interpretation:
+
+- rewriting only the top-level talker string object at `param_1[0]` is **not**
+  sufficient to query another conversation
+- the raw iterator is still honoring additional state from the wrapper-built
+  query object, almost certainly one or more of:
+  - `param_1[3]`
+  - `param_1[4]`
+  - `param_1[5]`
+  - wrapper-specific range/window state that still corresponds to the original
+    Glenn query
+
+Why this matters:
+
+- this is still a useful win
+- it proves the redirect mechanism itself works on the correct thread and on a
+  live wrapper-built query
+- the next task is no longer “can we rewrite a live query?” but “which
+  additional query fields also encode the conversation identity or range state?”
+### Multi-Slot Redirect Success
+
+The first Glenn -> Adam redirect returning `0` rows is no longer sufficient
+evidence that the redirect was incomplete by itself.
+
+Two important corrections landed:
+
+- the user confirmed the Adam conversation currently has **no messages in
+  cache**
+- the redirector was patched to rewrite **both** known talker copies in the
+  live query object:
+  - primary talker object at `queryObj + 0x0`
+  - nested duplicate talker object at `*(queryObj + 0x20) + 0x18`
+
+Updated script:
+
+- `scripts/redirect-weixin-message-query.py`
+
+New validation run:
+
+- source talker: `wxid_3a40v7q8y4kk12` (Glenn)
+- target talker: `27208021116@chatroom` (Zuma Internal)
+- live redirected event:
+  - `queryObj = 0x1ea96781538`
+  - `dbCtx = 0x6360afe7f0`
+  - rewrites:
+    - `slot0 -> 27208021116@chatroom`
+    - `slot20+0x18 -> 27208021116@chatroom`
+
+Redirected result:
+
+- the iterator returned successfully
+- the output vector was **non-empty**
+- returned rows:
+  - `27208021116@chatroom -> test456`
+  - `27208021116@chatroom -> yo yo`
+
+Why this is a major step:
+
+- it proves the native iterator can be steered onto a different conversation
+  without the UI actually selecting that target conversation
+- it proves the second talker copy in the query object matters
+- it strongly suggests the remaining blocker to full arbitrary-conversation
+  retrieval is not the basic conversation id rewrite anymore, but the range /
+  paging state in the wrapper-built query object
+
+Current best interpretation:
+
+- the minimal conversation identity rewrite for `FUN_1813ff7c0` is at least:
+  - `queryObj + 0x0`
+  - `*(queryObj + 0x20) + 0x18`
+- after those two are rewritten, the iterator can return another
+  conversation's rows when the surrounding query state is compatible
+- the Adam `0`-row result is now plausibly the correct result for an empty or
+  not-yet-materialized message window, rather than proof that redirect was
+  fundamentally broken
+
+Implication for the all-messages goal:
+
+- we now have the first concrete proof that arbitrary per-conversation message
+  retrieval is achievable by hijacking / constructing the right query object
+- the next work item is to control the query window / paging fields so we can
+  request more than just the currently materialized slice
+
+### Paging Worker Static Findings
+
+I switched the Ghidra MCP analysis calls to explicit `program=Weixin.dll`
+queries and pulled the next likely paging worker:
+
+- `FUN_1813f86b0` at `Weixin.dll + 0x13f86b0`
+
+Current best interpretation from the decompilation:
+
+- this is an iterative message-history worker rather than the simple
+  materialized-slice iterator
+- it initializes:
+  - `local_7c = 100`
+  - `local_78 = 0xffffffff`
+- it repeatedly calls the shared worker:
+  - `FUN_1813ef9c0(...)`
+- it walks the returned `0x290` message rows and, for matched rows, forwards
+  them to:
+  - `FUN_1813e1c00(*(param_1 + 0x30), row)`
+- it uses a timestamp-like threshold at:
+  - `**(uint **)(param_1 + 0x28)`
+- it uses a stop/cancel byte at:
+  - `**(char **)(param_1 + 0x10)`
+- it uses a talker string object at:
+  - `param_1 + 0x8`
+- it also compares against a second string-like object at:
+  - `param_1 + 0x20`
+
+The most important implication is that `FUN_1813f86b0` appears much closer to a
+true bounded / iterative history fetch than `FUN_1813ff7c0`. It is therefore
+the strongest current lead for moving beyond the currently materialized Glenn
+slice and toward full per-conversation history retrieval.
+
+### Wrapper Idle / Iterator Still Active
+
+After the fresh Weixin restart:
+
+- `scripts/redirect-weixin-message-wrapper-query.py` attached successfully to
+  `FUN_181411990`
+- but simple Glenn scrolling did **not** trigger that wrapper path
+- in the same period, `FUN_1813ff7c0` continued to fire repeatedly and returned
+  the familiar Glenn slices:
+  - a newer `7`-row slice
+  - an older `4`-row slice
+
+This is useful even though the wrapper itself stayed idle:
+
+- it means the current UI activity is still being serviced by the iterator
+  family
+- but the wrapper we guessed is not the live paging driver for this exact
+  interaction
+- that is why the next probe should target `FUN_1813f86b0` directly instead of
+  spending more time on `FUN_181411990`
+
+### Focused Pager Probe Added
+
+New instrumentation script:
+
+- `scripts/probe-weixin-message-pager.py`
+
+What it hooks:
+
+- `FUN_1813f86b0` at `Weixin.dll + 0x13f86b0`
+- `FUN_1813e1c00` at `Weixin.dll + 0x13e1c00`
+
+What it records:
+
+- on pager entry:
+  - talker from `param_1 + 0x8`
+  - secondary string from `param_1 + 0x20`
+  - stop flag pointer/value from `param_1 + 0x10`
+  - threshold pointer/value from `param_1 + 0x28`
+  - context pointer from `param_1 + 0x18`
+  - sink object from `param_1 + 0x30`
+- on each forwarded row:
+  - selected string fields from the row, including:
+    - `0x18`
+    - `0x28`
+    - `0x38`
+    - `0x58`
+    - `0x140`
+    - `0x180`
+  - selected integer fields, including:
+    - `0x104`
+    - `0x108`
+    - `0x110`
+    - `0x118`
+    - `0x120`
+    - `0x124`
+    - `0x128`
+    - `0x134`
+    - `0x138`
+
+Current status:
+
+- the probe attached cleanly to the restarted main process:
+  - `pager = 0x7ffa413286b0`
+  - `sink = 0x7ffa41311c00`
+- stdout:
+  - `C:\Users\Administrator\AppData\Local\Temp\weixin_message_pager_out.txt`
+- stderr:
+  - `C:\Users\Administrator\AppData\Local\Temp\weixin_message_pager_err.txt`
+
+The next live check is to scroll Glenn with this focused probe attached and see
+whether `FUN_1813f86b0` fires, which rows it forwards through `FUN_1813e1c00`,
+and whether the threshold field changes across paging attempts.
+
+### Negative Trigger Results: Pager, Snapshot, and Shared Worker
+
+I ran three focused live probes against the restarted Weixin while Glenn stayed
+selected and the user scrolled within the already-loaded 11-message history:
+
+- `scripts/probe-weixin-message-pager.py`
+  - hooks `FUN_1813f86b0`
+  - result: **no hits**
+- `scripts/probe-weixin-message-snapshot-worker.py`
+  - hooks `FUN_1813f62e0`
+  - result: **no hits**
+- `scripts/probe-weixin-message-shared-worker.py`
+  - hooks `FUN_1813ef9c0`
+  - result: **no hits**
+
+At the same time, the long-running iterator monitor continued to fire and
+return the same Glenn slice pair:
+
+- newer Glenn slice: `7` rows
+- older Glenn slice: `4` rows
+
+Interpretation:
+
+- once the Glenn conversation is already resident, simple up/down scrolling is
+  **not** using the deeper paging worker, the snapshot worker, or the shared
+  query worker we expected
+- the active path in this state appears to be even closer to the raw iterator /
+  materialized-vector replay than previously assumed
+- this also means the next promising direction is not “scroll harder in Glenn,”
+  but rather:
+  - force a genuinely uncached conversation / history path, or
+  - trace the construction of the raw iterator query object itself, or
+  - locate the owner of the materialized Glenn slice and then generalize from
+    that container instead of waiting for workers to fire
+
+This is still useful progress because it rules out three plausible layers for
+the already-loaded Glenn scroll path and prevents more time from being spent on
+those hooks for this exact UI state.
+
+### Async Message-Load Graph
+
+Static analysis uncovered a cleaner async loader chain on the message side:
+
+- `FUN_1809adb70`
+  - allocates a `0x60` work item
+  - schedules:
+    - worker body `FUN_1809aeb10`
+    - cleanup `FUN_1809aeac0`
+  - copies request state from `param_2`
+  - stores:
+    - `work + 0x48 = *(param_2 + 0x20)`
+    - `work + 0x50 = retained object`
+    - `work + 0x58 = retained object`
+
+- `FUN_1809aeb10`
+  - consumes that async work item
+  - builds temporary helper objects from `param_1 + 0x28`
+  - operates on `*(work + 0x50)` and `*(work + 0x58)`
+  - calls `FUN_180030a20(...)` on the embedded request payload
+
+- `FUN_1809c3b20`
+  - **confirmed code caller** of `FUN_1809adb70`
+  - xref:
+    - `0x1809c417d`
+  - takes `(param_1, param_2)`
+  - updates conversation/controller state and queues async work
+  - writes retained state into fields like:
+    - `obj + 0x40`
+    - `obj + 0x48`
+  - calls:
+    - `FUN_1809adb70(...)`
+
+- `FUN_1809c77c0`
+  - also calls `FUN_1809adb70`
+  - xref:
+    - `0x1809c786a`
+  - looks like a bounded “request more messages” helper:
+    - compares requested count with `*(obj + 0xcc)`
+    - caps the requested count at `100`
+    - stores the chosen count back to `obj + 0xcc`
+    - builds a small request object from `*(obj + 0x18) + 0x50`
+    - queues the async worker via `FUN_1809adb70(...)`
+
+Current interpretation:
+
+- `FUN_1809c3b20` looks like the broader conversation/session-side loader
+- `FUN_1809c77c0` looks like the more explicit “load up to N more” helper
+- both ultimately feed the same async worker path through `FUN_1809adb70`
+
+### Negative Live Result: Cached Conversation Switch Still Misses Loader
+
+I attached a focused live probe to:
+
+- `FUN_1809c3b20`
+- `FUN_1809c77c0`
+
+and then switched:
+
+- `Glenn -> Zuma Internal -> Glenn`
+
+Result:
+
+- **no hits** on either load entrypoint
+- meanwhile the existing raw iterator monitor still showed the familiar cached
+  slices for both conversations
+
+Interpretation:
+
+- once these conversations are already materially resident, a normal chat switch
+  does **not** hit the async loader chain
+- the async load graph is still likely real and valuable, but it probably needs
+  a colder trigger:
+  - freshly restarted Weixin and first-open of a conversation, or
+  - a conversation/history region that is not already resident in the current
+    UI state
+
+This is still progress because the message side is no longer just “mysterious
+iterator slices”; we now have a concrete async load graph with a likely
+`load-more` helper capped at `100`.
+
+### Fresh-Session Glenn Open on Correct UI PID
+
+I corrected an important runtime issue before repeating the cold-load test:
+
+- after restart, multiple `Weixin.exe` helper processes were present
+- the real main UI process had window title `WeChat` and PID `12780`
+- the probes were updated to accept `--pid` so they could attach to the exact
+  UI process instead of a random helper
+
+Updated scripts:
+
+- `scripts/monitor-weixin-message-iterator.py`
+- `scripts/probe-weixin-message-load-entrypoints.py`
+
+Fresh-session test:
+
+- attach cold-load entrypoint probe to `PID 12780`
+- attach raw iterator monitor to `PID 12780`
+- open `Glenn` for the first time in that fresh session
+- do not scroll first
+
+Result:
+
+- the load-entrypoint probe still showed **no hits** on:
+  - `FUN_1809c77c0`
+  - `FUN_1809c3b20`
+- the raw iterator fired immediately and returned the familiar Glenn slices:
+  - one `7`-row slice
+  - one `4`-row slice
+
+Fresh-session iterator output highlights:
+
+- query objects:
+  - `0x1728f3d31e8`
+  - `0x1728f4716d8`
+- the first-open Glenn slice still already contained:
+  - `message probe 20260408c`
+  - `message probe 20260408b`
+  - `latest message 20260408`
+  - `test456`
+  - `test123`
+  - `howdy`
+  - `test`
+- the paired older slice still contained:
+  - `Ack`
+  - `test 3`
+  - `test 2`
+  - `test`
+
+Interpretation:
+
+- even on a fresh session, first-open of Glenn in the main UI process is still
+  **not** going through the async load-entrypoint chain we identified
+- the app is satisfying the initial Glenn view directly from a resident source
+  that already has enough data to build the current materialized slices
+- that means the next useful search target is likely **upstream of the iterator
+  itself**, in the query-object constructor or in the owner of the resident
+  materialized slice, rather than in the later async “load more” worker path
+
+### Iterator Caller Stack Resolved Into Real Request-Builder Chain
+
+The accurate caller trace on the correct main UI PID (`12780`) was resolved in
+Ghidra and replaced the raw RVAs with a concrete request-builder chain.
+
+Resolved stack frames:
+
+- `0x1318a28` -> `FUN_181318970`
+- `0x30ab74e` -> `FUN_1830ab710`
+- `0x1316bb3` -> `FUN_181316a20`
+- `0xe15af5` -> `FUN_180e15ab0`
+- `0x13b2428` -> `FUN_1813b1b40`
+- `0x33c5c0a` -> `FUN_1833c5b00`
+- `0x2ab3390` -> `FUN_182ab3360`
+- `0x320ae1` -> `FUN_180320a50`
+- `0x57efc3` -> `FUN_18057ee90`
+- `0x4aeceac` -> `FUN_184aece70`
+
+This is the first useful high-confidence constructor chain above the native
+message iterator.
+
+#### `FUN_1833c5b00`: Request Owner / Entry Wrapper
+
+This function owns a request object and forwards its key fields into the real
+message builder:
+
+- passes `param_1 + 0x88` as the conversation/talker string to
+  `FUN_1813b1b40`
+- passes:
+  - `*(u32 *)(param_1 + 0x68)` as `param_4`
+  - `*(u32 *)(param_1 + 0x60)` as `param_5`
+  - `param_1 + 0x70` as `param_6`
+  - `param_1 + 0x40` as `param_7`
+  - `*(u32 *)(param_1 + 0x38)` as `param_8`
+- retains and forwards extra object state from:
+  - `param_1 + 0x28`
+  - `param_1 + 0x30`
+  - `param_1 + 0xc0`
+  - `param_1 + 0xb8`
+  - `param_1 + 0xa8`
+
+Most importantly, this gives us a stable live hook point where we can log:
+
+- talker id
+- requested message count
+- direction/mode-like flags
+- builder-side cursor/window state
+
+without having to guess from iterator output alone.
+
+#### `FUN_1813b1b40`: `GetMsgListWithDefault...` Builder
+
+This is the real request builder immediately above the async dispatch layer.
+
+Key observations from decompilation:
+
+- it constructs strings containing:
+  - `GetMsgListWithDefault`
+  - `GetMsgListWithDefault for session`
+- it accepts the talker string as `param_3`
+- it accepts a count-like value as `param_5`
+- it accepts additional query/window state through:
+  - `param_4`
+  - `param_6`
+  - `param_7`
+  - `param_9`
+- it allocates a `0x50` task object and ultimately dispatches through
+  `FUN_180e15ab0(...)`
+
+This is a much better target than the later speculative pager workers because
+it is clearly building the session message request, not merely consuming the
+result.
+
+#### Async Dispatch Subchain Below the Builder
+
+The builder then flows through:
+
+- `FUN_180e15ab0`
+  - thin wrapper over a worker-launch path
+- `FUN_181316a20`
+  - allocates another `0x50` object, stores the builder state, and dispatches
+- `FUN_1830ab710`
+  - validation / callback / dispatch gate
+- `FUN_181318970`
+  - downstream callback-style layer
+
+Interpretation:
+
+- the "all messages" problem is now less about finding the iterator and more
+  about learning the exact semantics of the request object that
+  `FUN_1833c5b00` and `FUN_1813b1b40` build
+- specifically:
+  - which field is the requested page size
+  - which field encodes direction / anchor / default-window behavior
+  - which fields need to be rewritten to query arbitrary conversations and walk
+    older ranges until exhaustion
+
+### New Focused Probe Added
+
+Added repo instrumentation script:
+
+- `scripts/probe-weixin-message-request-builder.py`
+
+It hooks:
+
+- `FUN_1833c5b00` (`Weixin.dll + 0x33c5b00`)
+- `FUN_1813b1b40` (`Weixin.dll + 0x13b1b40`)
+
+and logs:
+
+- talker id
+- request count from `obj + 0x60`
+- mode/flag from `obj + 0x68`
+- selected builder fields from the request owner object
+- builder arguments at the `GetMsgListWithDefault...` layer
+- accurate backtraces
+
+This should be the fastest path to turning the current per-conversation
+message retrieval into a controlled "all messages for this conversation" query,
+and then into an app-wide conversation-by-conversation crawler.
+
+### Builder Probe Results: Glenn vs Zuma Internal
+
+The focused request-builder probe on the main UI process (`PID 12780`) fired
+cleanly during a `Zuma Internal -> Glenn` switch.
+
+Observed request-owner objects (`FUN_1833c5b00`) and builder args
+(`FUN_1813b1b40`):
+
+#### Zuma Internal
+
+Two request-owner objects were observed:
+
+- owner `0x17285d50880`
+  - talker: `27208021116@chatroom`
+  - `flags38 = 0xffffffff`
+  - `count60 = 30`
+  - `mode68 = 0`
+  - `sharedC0 = 0x172867ec870`
+  - `region70 + 0x18 = 0x172915e3bd0`
+  - `region70 + 0x28 = 0x14`
+- owner `0x1728dbe8da0`
+  - talker: `27208021116@chatroom`
+  - `flags38 = 0xffffffff`
+  - `count60 = 28`
+  - `mode68 = 0`
+  - `sharedC0 = 0x1728e115790`
+  - `region70 + 0x18 = 0x172875a36b0`
+  - `region70 + 0x28 = 0x14`
+
+Matching builder args:
+
+- `param3` talker: `27208021116@chatroom`
+- `param4 = 0`
+- `param5 = 30` or `28`
+- `param6 + 0x18` matches the request-owner `region70 + 0x18` pointer
+- `param6 + 0x28 = 0x14`
+- `param7` string empty
+- `param8 = 0xffffffff`
+- `param9 = 0x60f38ff040`
+
+#### Glenn
+
+Two request-owner objects were observed:
+
+- owner `0x17285d50880`
+  - talker: `wxid_3a40v7q8y4kk12`
+  - `flags38 = 0xffffffff`
+  - `count60 = 30`
+  - `mode68 = 0`
+  - `sharedC0 = 0x1728eacc7c0`
+  - `region70 + 0x18 = 0x172915e3a20`
+  - `region70 + 0x28 = 0x13`
+- owner `0x172861f22c0`
+  - talker: `wxid_3a40v7q8y4kk12`
+  - `flags38 = 0xffffffff`
+  - `count60 = 23`
+  - `mode68 = 0`
+  - `sharedC0 = 0x1728d96e730`
+  - `region70 + 0x18 = 0x17291bbf9a0`
+  - `region70 + 0x28 = 0x13`
+
+Matching builder args:
+
+- `param3` talker: `wxid_3a40v7q8y4kk12`
+- `param4 = 0`
+- `param5 = 30` or `23`
+- `param6 + 0x18` matches the request-owner `region70 + 0x18` pointer
+- `param6 + 0x28 = 0x13`
+- `param7` string empty
+- `param8 = 0xffffffff`
+- `param9 = 0x60f38ff040`
+
+#### Correlated Iterator Result
+
+The same trigger produced the expected iterator results:
+
+- Zuma Internal still returned exactly `2` rows
+- Glenn still returned exactly `7 + 4` rows
+
+Interpretation:
+
+- `count60` / builder `param5` is a request limit or window target, not the
+  final returned row count
+- `param6 + 0x28` is now a strong conversation-kind discriminator:
+  - `0x13` for direct chat
+  - `0x14` for chatroom
+- `param6 + 0x18` is conversation-specific query/window state and is likely one
+  of the fields that must be controlled to page arbitrary history
+- `param7` is not carrying the talker string here
+- `param8` appears fixed at `0xffffffff` in these normal UI requests
+
+This is enough to move the next phase from guesswork to controlled experiments:
+rewrite `param3` talker plus the `param6` conversation-kind/window fields at the
+builder layer, then test whether changing `param5` can expand the materialized
+message window beyond the currently resident slice.
+
+### Breakthrough: Zuma Internal Now Returns a 30-Row Native Slice
+
+After additional recent messages were added to `Zuma Internal` and the convo was
+actively exercised in the UI, the same native iterator path finally returned a
+full 30-row slice instead of the earlier 2-row historical cache.
+
+Observed iterator results for `27208021116@chatroom`:
+
+- earlier steady-state result:
+  - `count = 2`
+  - rows: `test456`, `yo yo`
+- new result after the conversation was exercised with many new messages:
+  - `count = 30`
+  - newest rows include:
+    - `probe store 40`
+    - `probe store 39`
+    - `probe store 38`
+    - `probe store 37`
+    - `probe store 36`
+    - `probe store 35`
+    - `probe store 34`
+    - `probe store 33`
+
+Two corresponding iterator query objects were observed for the 30-row slice:
+
+- `0x1728d263af8`
+  - `slot0` / `slot20+0x18` talker: `27208021116@chatroom`
+  - `+0x8 = 0x1728d9d54e0`
+  - `+0x38 = 0x60f38ff0d0`
+  - `+0x48 = 0xe228a`
+- `0x172868305a8`
+  - `slot0` / `slot20+0x18` talker: `27208021116@chatroom`
+  - `+0x8 = 0x1728d9d54e0`
+  - `+0x38 = 0x60f38ff0d0`
+  - `+0x48 = 0x0`
+
+Matching builder-layer request-owner objects:
+
+- owner `0x1728dbe9280`
+  - talker: `27208021116@chatroom`
+  - `count60 = 30`
+  - `mode68 = 0`
+  - `region70 + 0x18 = 0x1728eef6060`
+  - `region70 + 0x28 = 0x14`
+- owner `0x1728f4e9b60`
+  - talker: `27208021116@chatroom`
+  - `count60 = 30`
+  - `mode68 = 0`
+  - `region70 + 0x18 = 0x17291bc7590`
+  - `region70 + 0x28 = 0x14`
+
+Interpretation:
+
+- the native path is now proven capable of returning at least a 30-message local
+  slice for a conversation
+- the earlier 2-row Zuma result was not a hard limit of the iterator; it was a
+  product of conversation window/state
+- `count60 / param5 = 30` appears to be a real active request window size when
+  the conversation state is warm enough to expose the newer local history
+- the conversation-specific state at `param6 + 0x18` still changes between runs
+  and remains the strongest candidate for the anchor/cursor that controls which
+  30-row slice is materialized
+
+Most important practical conclusion:
+
+- we now have a solid local-message retrieval primitive for a selected
+  conversation that can return a meaningful page (`30` rows) of structured
+  message metadata
+- the remaining step to "all local messages" is to learn how to advance or
+  rewrite the conversation-specific window/cursor state so we can fetch the next
+  older page, then repeat until exhaustion
+
+### Zuma Internal History Shape Confirmed By UI
+
+User verified on 2026-04-08 that, after scrolling back through `Zuma Internal`, there are only
+`2` messages older than the `probe store xx` series:
+
+- `yo yo`
+- `test456`
+
+Interpretation:
+
+- the local `Zuma Internal` history currently appears to be the `probe store ...`
+  batch plus exactly those two older messages
+- this matches the earlier native iterator evidence where the oldest previously
+  visible slice for `27208021116@chatroom` consisted of exactly:
+  - `test456`
+  - `yo yo`
+- the `30`-row native page we captured is therefore likely a newest-page slice of
+  a conversation whose remaining older tail is very small
+
+Practical consequence:
+
+- for `Zuma Internal`, the local message store is now bounded enough that we can
+  treat the conversation as a near-complete paging test case
+- the remaining technical work is less about proving deep history exists, and more
+  about forcing or reading the older tail page programmatically so we can iterate
+  arbitrary conversations without UI help
+
+### Breakthrough: Forced Builder Count Retrieves Full Local Zuma Internal History
+
+On 2026-04-08, a new active probe `scripts/force-weixin-message-count.py` forced the
+builder-layer request count from the normal UI value (`30`) to `100` for
+`27208021116@chatroom` (`Zuma Internal`).
+
+Result:
+
+- the native iterator returned `45` rows in a single response
+- this is no longer the truncated newest-page slice; it contains the full local
+  conversation history currently present for this chat
+
+Observed forced query details:
+
+- talker: `27208021116@chatroom`
+- original builder count: `30`
+- forced builder count: `100`
+- iterator query object: `0x17291b60518`
+- query object `+0x48`: `416403157048`
+- vector count returned: `45`
+
+The returned `45` rows include:
+
+- `probe store 40` down through `probe store 1`
+- one bare `probe store` row
+- system rows:
+  - `You removed "Oli" from the group chat`
+  - `You removed "Glenn" from the group chat`
+- older tail rows:
+  - `test456`
+  - `yo yo`
+
+This is the first proof that the message-retrieval bottleneck is not a hard
+iterator limit. The builder request size is an effective control surface, and
+raising it can expand a selected conversation from the normal UI window (`30`)
+into the full currently available local history (`45` here).
+
+Practical conclusion:
+
+- we now have a working native primitive to retrieve all locally available
+  messages for a selected conversation, at least when the full local history is
+  smaller than the forced request cap
+- the next step is to combine this with conversation targeting so the same
+  forced-count retrieval can be applied to arbitrary conversation IDs, not only
+  the one currently selected in the UI
+
+### Breakthrough: Arbitrary-Conversation Full Local Retrieval Via Redirect + Forced Count
+
+On 2026-04-08, `scripts/redirect-force-weixin-message-query.py` successfully
+combined two controls in one live query:
+
+- builder-layer request count force: `30 -> 100`
+- iterator-layer talker rewrite:
+  - source UI talker: `wxid_3a40v7q8y4kk12` (`Glenn`)
+  - target talker: `27208021116@chatroom` (`Zuma Internal`)
+
+Verified live result:
+
+- Weixin built a normal Glenn query
+- the builder hook forced the request size to `100`
+- the iterator hook rewrote both talker copies in the query object to
+  `27208021116@chatroom`
+- the iterator returned `45` Zuma Internal rows, not Glenn rows
+
+Concrete observed query object:
+
+- query object: `0x17295383fc8`
+- rewrites applied:
+  - `slot0 -> 27208021116@chatroom`
+  - `slot20+0x18 -> 27208021116@chatroom`
+- query object `+0x48_u64 = 8589934596`
+- vector count returned: `45`
+
+Returned row set included:
+
+- `probe store 40` down through `probe store 1`
+- one bare `probe store`
+- system rows:
+  - `You removed "Oli" from the group chat`
+  - `You removed "Glenn" from the group chat`
+- older tail rows:
+  - `test456`
+  - `yo yo`
+
+Interpretation:
+
+- message retrieval is no longer bound to the currently selected conversation
+- a selected source conversation can be used as a carrier request, then redirected
+  in-flight to an arbitrary known target conversation id
+- with the count forced high enough, the target conversation can yield its full
+  currently available local history in one native call when the history size is
+  below the forced cap
+
+This is the strongest message-store result so far because it demonstrates the
+practical primitive we need for app-wide crawling:
+
+1. enumerate conversations
+2. trigger or synthesize a carrier request
+3. redirect the talker to the target conversation id
+4. raise the request count
+5. collect structured native message rows
+
+### System Message Rows Are Real First-Class Message Records
+
+The redirected `Zuma Internal` full-history retrieval also confirmed that system
+events are present in the same native message row stream as user-authored
+messages.
+
+Verified examples:
+
+- `You removed "Oli" from the group chat`
+- `You removed "Glenn" from the group chat`
+
+These are not probe artifacts or UI-only notifications. They came back as
+normal `0x290` iterator rows with their own timestamps and metadata, which means
+the eventual extractor should treat system rows as part of the canonical local
+message store and classify/filter them at a higher layer if needed.
+
+Current field-level interpretation from the verified `Zuma Internal` system rows:
+
+- content at `+0x180` is the human-readable system event text
+- timestamp at `+0x124` is still populated normally
+- the string layout differs from a normal user-authored group message:
+  - normal self-authored group rows:
+    - `+0x18 = wxid_yfe3gm54e5il12`
+    - `+0x38 = 27208021116@chatroom`
+    - `+0x58 = wxid_yfe3gm54e5il12`
+  - system rows:
+    - `+0x18 = 27208021116@chatroom`
+    - `+0x38 = wxid_yfe3gm54e5il12`
+    - `+0x58` absent
+- integer fields also shift into a distinct signature:
+  - normal text rows in this chat:
+    - `+0x120 = 1`
+    - `+0x128 = 2` or `3`
+    - `+0x138 = 1` or `10`
+    - `+0x1c0 = 1`
+    - `+0x1c4 = 2`
+  - verified system rows:
+    - `+0x120 = 4`
+    - `+0x128 = 4`
+    - `+0x138 = 2`
+    - `+0x1c0 = 2`
+    - `+0x1c4 = 1`
+
+So the current best interpretation is:
+
+- actor/sender is still you (`wxid_yfe3gm54e5il12` / Chase), because the event
+  text itself says `You removed ...` and `+0x38` holds your self id
+- but system rows use a different field convention than ordinary text rows, so
+  we should not assume `+0x18/+0x38/+0x58` mean the same thing across all
+  message kinds
+
+This signature is now wired into the active probe scripts as a programmatic
+classifier:
+
+- [monitor-weixin-message-iterator.py](/C:/Users/Administrator/Code/puppet-xp/scripts/monitor-weixin-message-iterator.py)
+- [force-weixin-message-count.py](/C:/Users/Administrator/Code/puppet-xp/scripts/force-weixin-message-count.py)
+- [redirect-force-weixin-message-query.py](/C:/Users/Administrator/Code/puppet-xp/scripts/redirect-force-weixin-message-query.py)
+
+Each emitted row now carries:
+
+- `message_kind: "system"` when the `4/4/2/2/1` metadata signature matches
+- `message_kind: "user"` otherwise
+- `system_signature: "4/4/2/2/1"` for matched system rows
