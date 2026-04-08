@@ -1115,7 +1115,7 @@ High-confidence row-derived mappings:
     `Oli` strings next to the tail of the id blob
 - `wxid_yfe3gm54e5il12 -> zumalabs / Chase`
   - self account
-  - user-confirmed vanity id + display name pairing
+  - user-confirmed alias + display name pairing
   - also supported by a packed memory artifact:
     - `wxid_yfe3gm54e5il12zumalabsChase`
 
@@ -1123,7 +1123,7 @@ Additional row-derived IDs recovered from the same path:
 
 - `wxid_ulr3oq29ruo312`
   - recovered from row `12`
-  - likely the Max Nijhawan contact with a vanity display name
+  - likely the Max Nijhawan contact with an alias display name
   - still unresolved from the current row-node dump
 
 ### Important Interpretation
@@ -1303,7 +1303,7 @@ user confirmations so far, the best current 9-contact set is:
 - `weixin -> WeChat Team`
   - clean live co-occurrence
 - `wxid_yfe3gm54e5il12 -> Chase`
-  - vanity id: `zumalabs`
+  - alias: `zumalabs`
   - user-confirmed
 - `wxid_3a40v7q8y4kk12 -> Glenn`
   - user-confirmed
@@ -1447,12 +1447,12 @@ Summary:
 
 - `filehelper -> File Transfer`
 - `weixin -> WeChat Team`
-- `wxid_yfe3gm54e5il12 -> Chase` with vanity `zumalabs`
+- `wxid_yfe3gm54e5il12 -> Chase` with alias `zumalabs`
 - `wxid_3a40v7q8y4kk12 -> Glenn`
 - `wxid_cdxvsfdqlbqw22 -> Adam - Arrow FFAs`
 - `wxid_jh7tgf4ggsgs22 -> Heng Chen 陳亨`
 - `wxid_shj82mm92ok622 -> Oli`
-- `wxid_ulr3oq29ruo312 -> Max Nijhawan` with vanity `MNijhawan9`
+- `wxid_ulr3oq29ruo312 -> Max Nijhawan` with alias `MNijhawan9`
 - `wxid_j6362wqv6yqf22 -> Simon`
 
 Confidence notes:
@@ -1856,7 +1856,7 @@ High-confidence interpretation:
 - for the recovered `Zuma Internal` rows, both `+0x18` and `+0x58` equal the
   already verified self id `wxid_yfe3gm54e5il12`, so the current best
   interpretation is that `yo yo` and `test456` were sent by the logged-in self
-  account (`Chase` / vanity `zumalabs`)
+  account (`Chase` / alias `zumalabs`)
 - `yo yo` was **not** found by a broad string scan while Glenn was selected, but
   it **was** recovered by the native iterator path, which is exactly the kind of
   distinction we were looking for
@@ -2956,3 +2956,326 @@ Each emitted row now carries:
 - `message_kind: "system"` when the `4/4/2/2/1` metadata signature matches
 - `message_kind: "user"` otherwise
 - `system_signature: "4/4/2/2/1"` for matched system rows
+
+### Self Identity And Sent-vs-Received Classification
+
+Current verified self account for the logged-in test user:
+
+- self wxid: `wxid_yfe3gm54e5il12`
+- alias: `zumalabs`
+- display name: `Chase`
+
+This self identity has been corroborated by:
+
+- live contact/session artifacts
+- the local WeChat data path
+  - `C:\Users\Administrator\Documents\WeChat Files\wxid_yfe3gm54e5il12`
+- multiple message rows where the actor fields line up with user-verified
+  self-authored messages
+
+Current programmatic rule for normal user-authored message rows:
+
+- if `message_kind == "user"` and both `+0x18` and `+0x58` equal the self wxid,
+  classify the row as `sent_by_self`
+- if `message_kind == "user"` and `+0x18` / `+0x58` equal some other wxid,
+  classify the row as `received_from_peer`
+
+This rule is already validated against:
+
+- Glenn direct-chat sent rows
+- Glenn direct-chat received row `Ack`
+- Zuma Internal self-authored group rows
+
+Important caution:
+
+- for direct chats, `+0x38` is not safe to treat as a universal conversation-id
+  field across all row directions
+- the safest current sender test is based on the actor-like wxid fields
+  `+0x18` and `+0x58`, together with the separately known self wxid
+- system rows are a separate message kind and should not use the normal
+  user-row sender rule
+
+### Canonical Self/Account Manager Path
+
+The new `4.1.8.29` self/account path is now materially pinned and live-verified
+from the running `Weixin.exe`, rather than inferred only from contacts,
+messages, or filesystem paths.
+
+There appear to be two closely related native paths:
+
+1. login/account context path
+2. self snapshot/materialization path
+
+#### 1. Login/Account Context Path
+
+`FUN_180020800` is a thin wrapper over the global manager at `DAT_18a2ffe80`
+virtual method `+0x60`. It returns a shared/ref-counted login/account context
+object.
+
+Live probe result on PID `12780`:
+
+- shared/context wrapper returned by `FUN_180020800`
+- context object pointer: `0x17286835740`
+- ref/control pointer: `0x17286835730`
+
+Small accessors on that context are now verified:
+
+- `FUN_180303e80(ctx)` -> `ctx + 0x508`
+  - current value: `1`
+  - interpreted as `issyncrecord`
+- `FUN_180303ea0(ctx)` -> `ctx + 0x50c == 1`
+  - current value: `true`
+  - interpreted as `isautologin`
+- `FUN_180303eb0(ctx)` -> `ctx + 0x50c`
+  - current value: `1`
+  - interpreted as `pc_login_type`
+- `FUN_180303ec0(ctx)` -> `ctx + 0x510`
+  - current value: `1775678432`
+  - interpreted as `login_sid`
+- `FUN_180303e70(ctx)` -> `ctx + 0x518`
+  - current value: `1775678336`
+  - interpreted as login-base timestamp for `difflogintime`
+
+This path is the best current anchor for login state and session/account flags.
+
+#### 2. Self Snapshot / Materialization Path
+
+`FUN_18001f540()` returns the global self/account manager object
+`DAT_18a2ffe80`. The helper `FUN_180020aa0(manager, out, 1)` materializes a
+self/account snapshot struct from MMKV-backed keys such as:
+
+- `mmkv_key_user_name`
+- `mmkv_key_nick_name`
+- `mmkv_key_head_img_url`
+- `mmkv_key_pc_account_name`
+- `mmkv_key_server_id`
+
+The snapshot struct layout is now anchored by the destructor
+`FUN_1800232f0`, which frees string slots at these offsets:
+
+- `+0x00`
+- `+0x28`
+- `+0x48`
+- `+0x68`
+- `+0x88`
+- `+0xA8`
+- `+0xD0`
+
+Live probe script:
+
+- [probe-weixin-self-account.py](/C:/Users/Administrator/Code/puppet-xp/scripts/probe-weixin-self-account.py)
+
+Live snapshot output on PID `12780`:
+
+- manager pointer: `0x17286574de0`
+- manager vtable: `0x7ffa47cf2908`
+- `user_name` at `+0x00` -> `wxid_yfe3gm54e5il12`
+- `nick_name` at `+0x28` -> `Chase`
+- `pc_account_name` at `+0x88` -> `ZUMA-WINDOWS-VM`
+- `head_img_url` at `+0x68` -> empty in this session
+
+Most importantly, the manager's own virtual getter at `vtable + 0x20`, cloned
+via `FUN_1800f6cb0`, also returned:
+
+- `account_username` -> `wxid_yfe3gm54e5il12`
+
+So on this build, the canonical self/account manager path gives us the logged-in
+self wxid directly, and the manager's own `account_username` value matches the
+snapshot `user_name`.
+
+#### Current Practical Rule
+
+For robust sent-vs-received classification on arbitrary logged-in users, the
+best current programmatic source of truth is:
+
+- self wxid = `FUN_18001f540()` -> `FUN_180020aa0(manager, out, 1)` -> string
+  at snapshot offset `+0x00`
+
+Current verified value:
+
+- self wxid: `wxid_yfe3gm54e5il12`
+- display name: `Chase`
+
+This is stronger than the earlier heuristic/corroborated identification because
+it comes straight from the live native self/account manager path.
+
+### Vanity ID <-> `wxid` Translation Path
+
+The current best translation path is now much clearer, and it is not the same
+thing as the self/account manager path.
+
+#### 1. `Name2Id` Is Real, But It Does Not Return The Final `wxid`
+
+The `Name2Id` side is still important, but the smaller consumer helpers show
+that it resolves to a 32-bit value, not directly to a `wxid` string.
+
+Static anchors:
+
+- `FUN_180e15c10`
+  - ensures/binds `Name2Id` on the owner object
+- `FUN_180e17480`
+  - populates the `Name2Id` map from contact/session-backed records
+- `FUN_180e19c40`
+  - low-level unordered-map insert helper
+- `FUN_180e24e30`
+  - single-candidate `Name2Id` consumer path
+- `FUN_180e202f0`
+  - batched `Name2Id` consumer path
+
+Most important correction from decompilation:
+
+- `FUN_180e1ecb0`
+  - calls the `Name2Id` consumer path
+  - writes the resolved result into a 32-bit destination slot
+  - so this looks like `name -> internal contact row id` or similar, not
+    `name -> wxid`
+
+So `Name2Id` is likely the first half of translation, not the whole answer.
+
+#### 2. The Canonical `contact` Table Carries Both `username` And `alias`
+
+The decisive static anchor is the `contact` table schema factory
+`FUN_180d930a0()`. This object explicitly registers the following fields:
+
+- `username` at `+0x08`
+- `local_type` at `+0x04`
+- `alias` at `+0x28`
+- `encrypt_username` at `+0x48`
+- `delete_flag` at `+0x68`
+- `verify_flag` at `+0x70`
+- `remark` at `+0x78`
+- `nick_name` at `+0xD8`
+- `big_head_url` at `+0x138`
+- `small_head_url` at `+0x158`
+- `description` at `+0x1A0`
+- `extra_buffer` at `+0x1C8`
+
+This is the strongest current evidence that the canonical bidirectional
+translation source is the contact row itself:
+
+- `wxid` side = `username`
+- alias / WeChat ID side = `alias`
+
+#### 3. Contact Row Fetch Path
+
+The current best row-fetch family is:
+
+- `FUN_18250a890`
+  - large contact row query/paging worker
+  - builds a `Contact` query with row projection including:
+    - `username`
+    - `alias`
+    - `encryptUsername`
+    - `remark`
+    - `nickName`
+    - `rowid`
+    - head-image fields
+- `FUN_182509a40`
+  - wrapper around `FUN_18250a890`
+- `FUN_180bf9bd0`
+  - higher-level pager that repeatedly calls `FUN_182509a40`
+  - looks like a full contact-page enumerator with a large page size
+
+Most important implementation conclusion:
+
+- the cleanest robust translation method is probably not a dedicated
+  `ResolveAliasToWxid()` function
+- instead, enumerate canonical contact rows from the `contact` table and build:
+  - `alias -> username`
+  - `username -> alias`
+
+That is more robust than relying on message-layer artifacts, and it naturally
+extends to also returning `remark`, `nick_name`, avatars, and the other contact
+metadata fields.
+
+#### 4. Current Best Practical Plan
+
+At this point the best translation implementation strategy is:
+
+1. use the `contact` table row-fetch path (`FUN_182509a40` /
+   `FUN_18250a890` / `FUN_180bf9bd0`)
+2. extract both:
+   - `username`
+   - `alias`
+3. treat:
+   - `username` as the canonical native messaging identity (`wxid` / builtin /
+     `@chatroom`)
+   - `alias` as the alias / WeChat ID when present
+4. build an in-memory bidirectional lookup map from the fetched contact rows
+
+This is the strongest current answer to “how do we translate aliases and
+usernames?” on `4.1.8.29`.
+
+### Direct-Chat Example: Max Nijhawan
+
+A clean single-row direct-chat probe was captured for `Max Nijhawan` after the
+user sent `test`.
+
+Verified conversation id:
+
+- `wxid_ulr3oq29ruo312`
+
+Native forced-query result:
+
+- builder target talker: `wxid_ulr3oq29ruo312`
+- returned row count: `1`
+- row strings:
+  - `+0x18 = wxid_yfe3gm54e5il12`
+  - `+0x38 = wxid_ulr3oq29ruo312`
+  - `+0x58 = wxid_yfe3gm54e5il12`
+  - `+0x140 = <msgsource><alnode><fr>1</fr></alnode></msgsource>`
+  - `+0x180 = test`
+- row ints:
+  - `+0x120 = 1`
+  - `+0x124 = 1775683742`
+  - `+0x128 = 2`
+  - `+0x138 = 1`
+  - `+0x1c0 = 1`
+  - `+0x1c4 = 5`
+- classified kind:
+  - `message_kind = user`
+  - `system_signature = null`
+
+Timestamp conversion for `+0x124 = 1775683742`:
+
+- London: `2026-04-08 22:29:02 +01:00`
+
+Interpretation:
+
+- this row is a normal user-authored direct-chat message
+- sender/self fields `+0x18` and `+0x58` both equal the canonical self wxid
+  `wxid_yfe3gm54e5il12`
+- `+0x38` is the direct-chat conversation id / peer id
+
+### Trusted Contact ID Table Artifact
+
+A repo-local table builder now exists at:
+
+- `scripts/build-weixin-contact-id-table.py`
+
+This script does not attempt fresh heuristic alias recovery. Instead, it builds a
+trusted account-local ID table from the already validated recovered contact
+artifact:
+
+- source: `docs/weixin-4.1.8.29-current-contact-table.json`
+- output: `docs/weixin-4.1.8.29-contact-id-table.json`
+
+The output includes:
+
+- every recovered contact/builtin row
+- `username`
+- `username_kind`
+- `name`
+- `alias` when confirmed
+- bidirectional maps:
+  - `alias_to_username`
+  - `username_to_alias`
+
+Current confirmed alias pairs in this artifact are:
+
+- `zumalabs -> wxid_yfe3gm54e5il12`
+- `MNijhawan9 -> wxid_ulr3oq29ruo312`
+
+This is the safest current translation table to use until the canonical contact
+row fetch path (`FUN_182509a40` / `FUN_18250a890` / `FUN_180bf9bd0`) is wired
+up directly in code.

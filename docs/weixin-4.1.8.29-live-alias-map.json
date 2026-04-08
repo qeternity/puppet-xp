@@ -1,0 +1,652 @@
+{
+  "generated_at": "2026-04-08T23:29:12.8656168+01:00",
+  "pid": 12780,
+  "source_contacts": "C:\\Users\\Administrator\\Code\\puppet-xp\\docs\\weixin-4.1.8.29-current-contact-table.json",
+  "pair_count": 7,
+  "pairs": [
+    {
+      "username": "wxid_3a40v7q8y4kk12",
+      "alias": "probe",
+      "name": "Glenn",
+      "confidence_score": 5961,
+      "expected_alias": null
+    },
+    {
+      "username": "wxid_cdxvsfdqlbqw22",
+      "alias": "status1_ts",
+      "name": "Adam - Arrow FFAs",
+      "confidence_score": 1535,
+      "expected_alias": null
+    },
+    {
+      "username": "wxid_j6362wqv6yqf22",
+      "alias": "coroutine-coroutine_3540",
+      "name": "Simon",
+      "confidence_score": 396,
+      "expected_alias": null
+    },
+    {
+      "username": "wxid_jh7tgf4ggsgs22",
+      "alias": "newsync",
+      "name": "Heng Chen 陳亨",
+      "confidence_score": 1620,
+      "expected_alias": null
+    },
+    {
+      "username": "wxid_shj82mm92ok622",
+      "alias": "teKey",
+      "name": "Oli",
+      "confidence_score": 2115,
+      "expected_alias": null
+    },
+    {
+      "username": "wxid_ulr3oq29ruo312",
+      "alias": "cgi-bin",
+      "name": "Max Nijhawan",
+      "confidence_score": 1934,
+      "expected_alias": "MNijhawan9"
+    },
+    {
+      "username": "wxid_yfe3gm54e5il12",
+      "alias": "wa_contact_fts_pinyin_v1",
+      "name": "Chase",
+      "confidence_score": 396,
+      "expected_alias": "zumalabs"
+    }
+  ],
+  "rows": [
+    {
+      "username": "wxid_yfe3gm54e5il12",
+      "name": "Chase",
+      "best_alias": "wa_contact_fts_pinyin_v1",
+      "confidence_score": 396,
+      "candidates": [
+        {
+          "token": "wa_contact_fts_pinyin_v1",
+          "score": 396,
+          "raw_score": 396,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_yfe3gm54e5il12"
+          ]
+        },
+        {
+          "token": "Files",
+          "score": 391,
+          "raw_score": 341,
+          "hit_count": 2,
+          "shared_with": [
+            "wxid_yfe3gm54e5il12"
+          ]
+        },
+        {
+          "token": "wa_contact_fts_v1",
+          "score": 335,
+          "raw_score": 335,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_yfe3gm54e5il12"
+          ]
+        },
+        {
+          "token": "BackupFiles",
+          "score": 319,
+          "raw_score": 319,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_yfe3gm54e5il12"
+          ]
+        },
+        {
+          "token": "Changed",
+          "score": 319,
+          "raw_score": 319,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_yfe3gm54e5il12"
+          ]
+        },
+        {
+          "token": "Administrator",
+          "score": 314,
+          "raw_score": 384,
+          "hit_count": 2,
+          "shared_with": [
+            "wxid_ulr3oq29ruo312",
+            "wxid_yfe3gm54e5il12"
+          ]
+        },
+        {
+          "token": "WeChat",
+          "score": 307,
+          "raw_score": 307,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_yfe3gm54e5il12"
+          ]
+        },
+        {
+          "token": "novac2",
+          "score": 305,
+          "raw_score": 305,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_yfe3gm54e5il12"
+          ]
+        }
+      ],
+      "expected_alias": "zumalabs"
+    },
+    {
+      "username": "wxid_3a40v7q8y4kk12",
+      "name": "Glenn",
+      "best_alias": "probe",
+      "confidence_score": 5961,
+      "candidates": [
+        {
+          "token": "probe",
+          "score": 5961,
+          "raw_score": 5721,
+          "hit_count": 24,
+          "shared_with": [
+            "wxid_3a40v7q8y4kk12",
+            "wxid_cdxvsfdqlbqw22",
+            "wxid_jh7tgf4ggsgs22",
+            "wxid_ulr3oq29ruo312"
+          ]
+        },
+        {
+          "token": "chatname",
+          "score": 5904,
+          "raw_score": 5619,
+          "hit_count": 21,
+          "shared_with": [
+            "wxid_3a40v7q8y4kk12",
+            "wxid_cdxvsfdqlbqw22",
+            "wxid_ulr3oq29ruo312"
+          ]
+        },
+        {
+          "token": "input_box_mic",
+          "score": 5898,
+          "raw_score": 5493,
+          "hit_count": 21,
+          "shared_with": [
+            "wxid_3a40v7q8y4kk12",
+            "wxid_ulr3oq29ruo312"
+          ]
+        },
+        {
+          "token": "view_exp",
+          "score": 5073,
+          "raw_score": 4718,
+          "hit_count": 19,
+          "shared_with": [
+            "wxid_3a40v7q8y4kk12",
+            "wxid_cdxvsfdqlbqw22"
+          ]
+        },
+        {
+          "token": "latest",
+          "score": 4550,
+          "raw_score": 4200,
+          "hit_count": 14,
+          "shared_with": [
+            "wxid_3a40v7q8y4kk12"
+          ]
+        },
+        {
+          "token": "XTextView",
+          "score": 3166,
+          "raw_score": 3051,
+          "hit_count": 19,
+          "shared_with": [
+            "wxid_3a40v7q8y4kk12",
+            "wxid_cdxvsfdqlbqw22",
+            "wxid_shj82mm92ok622",
+            "wxid_ulr3oq29ruo312"
+          ]
+        },
+        {
+          "token": "yI6W3siS",
+          "score": 372,
+          "raw_score": 372,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_3a40v7q8y4kk12"
+          ]
+        },
+        {
+          "token": "default-longlink",
+          "score": 354,
+          "raw_score": 424,
+          "hit_count": 2,
+          "shared_with": [
+            "wxid_3a40v7q8y4kk12",
+            "wxid_ulr3oq29ruo312"
+          ]
+        }
+      ]
+    },
+    {
+      "username": "wxid_cdxvsfdqlbqw22",
+      "name": "Adam - Arrow FFAs",
+      "best_alias": "status1_ts",
+      "confidence_score": 1535,
+      "candidates": [
+        {
+          "token": "status1_ts",
+          "score": 1535,
+          "raw_score": 1435,
+          "hit_count": 4,
+          "shared_with": [
+            "wxid_cdxvsfdqlbqw22"
+          ]
+        },
+        {
+          "token": "ne_272",
+          "score": 1288,
+          "raw_score": 1188,
+          "hit_count": 4,
+          "shared_with": [
+            "wxid_cdxvsfdqlbqw22"
+          ]
+        },
+        {
+          "token": "talker",
+          "score": 1158,
+          "raw_score": 1083,
+          "hit_count": 3,
+          "shared_with": [
+            "wxid_cdxvsfdqlbqw22"
+          ]
+        },
+        {
+          "token": "group",
+          "score": 1096,
+          "raw_score": 996,
+          "hit_count": 4,
+          "shared_with": [
+            "wxid_cdxvsfdqlbqw22"
+          ]
+        },
+        {
+          "token": "isclkjump",
+          "score": 1024,
+          "raw_score": 949,
+          "hit_count": 3,
+          "shared_with": [
+            "wxid_cdxvsfdqlbqw22"
+          ]
+        },
+        {
+          "token": "isclkmsgbub",
+          "score": 982,
+          "raw_score": 907,
+          "hit_count": 3,
+          "shared_with": [
+            "wxid_cdxvsfdqlbqw22"
+          ]
+        },
+        {
+          "token": "isscrollmsg",
+          "score": 934,
+          "raw_score": 859,
+          "hit_count": 3,
+          "shared_with": [
+            "wxid_cdxvsfdqlbqw22"
+          ]
+        },
+        {
+          "token": "issendmsg",
+          "score": 886,
+          "raw_score": 811,
+          "hit_count": 3,
+          "shared_with": [
+            "wxid_cdxvsfdqlbqw22"
+          ]
+        }
+      ]
+    },
+    {
+      "username": "wxid_jh7tgf4ggsgs22",
+      "name": "Heng Chen 陳亨",
+      "best_alias": "newsync",
+      "confidence_score": 1620,
+      "candidates": [
+        {
+          "token": "newsync",
+          "score": 1620,
+          "raw_score": 1805,
+          "hit_count": 7,
+          "shared_with": [
+            "wxid_cdxvsfdqlbqw22",
+            "wxid_j6362wqv6yqf22",
+            "wxid_jh7tgf4ggsgs22",
+            "wxid_shj82mm92ok622"
+          ]
+        },
+        {
+          "token": "QWidget",
+          "score": 368,
+          "raw_score": 438,
+          "hit_count": 2,
+          "shared_with": [
+            "wxid_cdxvsfdqlbqw22",
+            "wxid_jh7tgf4ggsgs22"
+          ]
+        },
+        {
+          "token": "apipay",
+          "score": 347,
+          "raw_score": 347,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_jh7tgf4ggsgs22"
+          ]
+        },
+        {
+          "token": "VmFsIjoi",
+          "score": 307,
+          "raw_score": 307,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_jh7tgf4ggsgs22"
+          ]
+        },
+        {
+          "token": "YWJfcmVj",
+          "score": 304,
+          "raw_score": 304,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_jh7tgf4ggsgs22"
+          ]
+        },
+        {
+          "token": "In0seyJL",
+          "score": 301,
+          "raw_score": 301,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_jh7tgf4ggsgs22"
+          ]
+        },
+        {
+          "token": "b3dfcmVk",
+          "score": 273,
+          "raw_score": 273,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_jh7tgf4ggsgs22"
+          ]
+        },
+        {
+          "token": "YVhRaU9q",
+          "score": 256,
+          "raw_score": 256,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_jh7tgf4ggsgs22"
+          ]
+        }
+      ]
+    },
+    {
+      "username": "wxid_shj82mm92ok622",
+      "name": "Oli",
+      "best_alias": "teKey",
+      "confidence_score": 2115,
+      "candidates": [
+        {
+          "token": "teKey",
+          "score": 2115,
+          "raw_score": 1890,
+          "hit_count": 9,
+          "shared_with": [
+            "wxid_shj82mm92ok622"
+          ]
+        },
+        {
+          "token": "hj82mm92ok622",
+          "score": 351,
+          "raw_score": 351,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_shj82mm92ok622"
+          ]
+        },
+        {
+          "token": "wenjianchuanshuzhushou",
+          "score": 293,
+          "raw_score": 293,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_shj82mm92ok622"
+          ]
+        },
+        {
+          "token": "rnPressed",
+          "score": 283,
+          "raw_score": 283,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_shj82mm92ok622"
+          ]
+        },
+        {
+          "token": "ble_info",
+          "score": 186,
+          "raw_score": 186,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_shj82mm92ok622"
+          ]
+        },
+        {
+          "token": "table_in1",
+          "score": 132,
+          "raw_score": 372,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_cdxvsfdqlbqw22",
+            "wxid_shj82mm92ok622",
+            "wxid_ulr3oq29ruo312"
+          ]
+        },
+        {
+          "token": "et-config",
+          "score": -24,
+          "raw_score": 216,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_cdxvsfdqlbqw22",
+            "wxid_jh7tgf4ggsgs22",
+            "wxid_shj82mm92ok622"
+          ]
+        },
+        {
+          "token": "XImage",
+          "score": -34,
+          "raw_score": 206,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_cdxvsfdqlbqw22",
+            "wxid_jh7tgf4ggsgs22",
+            "wxid_shj82mm92ok622"
+          ]
+        }
+      ]
+    },
+    {
+      "username": "wxid_ulr3oq29ruo312",
+      "name": "Max Nijhawan",
+      "best_alias": "cgi-bin",
+      "confidence_score": 1934,
+      "candidates": [
+        {
+          "token": "cgi-bin",
+          "score": 1934,
+          "raw_score": 2259,
+          "hit_count": 11,
+          "shared_with": [
+            "wxid_3a40v7q8y4kk12",
+            "wxid_cdxvsfdqlbqw22",
+            "wxid_j6362wqv6yqf22",
+            "wxid_jh7tgf4ggsgs22",
+            "wxid_ulr3oq29ruo312",
+            "wxid_yfe3gm54e5il12"
+          ]
+        },
+        {
+          "token": "coroutine-coroutine_3584",
+          "score": 1108,
+          "raw_score": 1008,
+          "hit_count": 4,
+          "shared_with": [
+            "wxid_ulr3oq29ruo312"
+          ]
+        },
+        {
+          "token": "micromsg-bin",
+          "score": 1000,
+          "raw_score": 1330,
+          "hit_count": 6,
+          "shared_with": [
+            "wxid_3a40v7q8y4kk12",
+            "wxid_cdxvsfdqlbqw22",
+            "wxid_j6362wqv6yqf22",
+            "wxid_jh7tgf4ggsgs22",
+            "wxid_ulr3oq29ruo312"
+          ]
+        },
+        {
+          "token": "coroutine-coroutine_3597",
+          "score": 916,
+          "raw_score": 816,
+          "hit_count": 4,
+          "shared_with": [
+            "wxid_ulr3oq29ruo312"
+          ]
+        },
+        {
+          "token": "last_msg_ext_type",
+          "score": 700,
+          "raw_score": 650,
+          "hit_count": 2,
+          "shared_with": [
+            "wxid_ulr3oq29ruo312"
+          ]
+        },
+        {
+          "token": "SessionTable",
+          "score": 626,
+          "raw_score": 576,
+          "hit_count": 2,
+          "shared_with": [
+            "wxid_ulr3oq29ruo312"
+          ]
+        },
+        {
+          "token": "tenpay",
+          "score": 620,
+          "raw_score": 520,
+          "hit_count": 4,
+          "shared_with": [
+            "wxid_ulr3oq29ruo312"
+          ]
+        },
+        {
+          "token": "coroutine-coroutine_3588",
+          "score": 601,
+          "raw_score": 526,
+          "hit_count": 3,
+          "shared_with": [
+            "wxid_ulr3oq29ruo312"
+          ]
+        }
+      ],
+      "expected_alias": "MNijhawan9"
+    },
+    {
+      "username": "wxid_j6362wqv6yqf22",
+      "name": "Simon",
+      "best_alias": "coroutine-coroutine_3540",
+      "confidence_score": 396,
+      "candidates": [
+        {
+          "token": "coroutine-coroutine_3540",
+          "score": 396,
+          "raw_score": 396,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_j6362wqv6yqf22"
+          ]
+        },
+        {
+          "token": "eview",
+          "score": 369,
+          "raw_score": 369,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_j6362wqv6yqf22"
+          ]
+        },
+        {
+          "token": "getsharecardlist",
+          "score": 341,
+          "raw_score": 341,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_j6362wqv6yqf22"
+          ]
+        },
+        {
+          "token": "coroutine-coroutine_3539",
+          "score": 329,
+          "raw_score": 329,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_j6362wqv6yqf22"
+          ]
+        },
+        {
+          "token": "getofflinepayinfo",
+          "score": 322,
+          "raw_score": 322,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_j6362wqv6yqf22"
+          ]
+        },
+        {
+          "token": "etailInfo",
+          "score": 291,
+          "raw_score": 291,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_j6362wqv6yqf22"
+          ]
+        },
+        {
+          "token": "coroutine-coroutine_3512",
+          "score": 281,
+          "raw_score": 281,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_j6362wqv6yqf22"
+          ]
+        },
+        {
+          "token": "coroutine-coroutine_3615",
+          "score": 252,
+          "raw_score": 252,
+          "hit_count": 1,
+          "shared_with": [
+            "wxid_j6362wqv6yqf22"
+          ]
+        }
+      ]
+    }
+  ]
+}

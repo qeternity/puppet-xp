@@ -1,6 +1,6 @@
 [
   {
-    "id": "filehelper",
+    "username": "filehelper",
     "name": "File Transfer",
     "native_labels": [
       "文件传输助手",
@@ -14,7 +14,7 @@
     ]
   },
   {
-    "id": "weixin",
+    "username": "weixin",
     "name": "WeChat Team",
     "native_labels": [
       "微信团队",
@@ -28,9 +28,9 @@
     ]
   },
   {
-    "id": "wxid_yfe3gm54e5il12",
+    "username": "wxid_yfe3gm54e5il12",
     "name": "Chase",
-    "vanity_id": "zumalabs",
+    "alias": "zumalabs",
     "native_labels": [
       "Chase",
       "zumalabs"
@@ -44,7 +44,7 @@
     ]
   },
   {
-    "id": "wxid_3a40v7q8y4kk12",
+    "username": "wxid_3a40v7q8y4kk12",
     "name": "Glenn",
     "confidence": "high",
     "sources": [
@@ -54,7 +54,7 @@
     ]
   },
   {
-    "id": "wxid_cdxvsfdqlbqw22",
+    "username": "wxid_cdxvsfdqlbqw22",
     "name": "Adam - Arrow FFAs",
     "confidence": "high",
     "sources": [
@@ -65,7 +65,7 @@
     ]
   },
   {
-    "id": "wxid_jh7tgf4ggsgs22",
+    "username": "wxid_jh7tgf4ggsgs22",
     "name": "Heng Chen 陳亨",
     "confidence": "high",
     "sources": [
@@ -76,7 +76,7 @@
     ]
   },
   {
-    "id": "wxid_shj82mm92ok622",
+    "username": "wxid_shj82mm92ok622",
     "name": "Oli",
     "confidence": "high",
     "sources": [
@@ -87,9 +87,9 @@
     ]
   },
   {
-    "id": "wxid_ulr3oq29ruo312",
+    "username": "wxid_ulr3oq29ruo312",
     "name": "Max Nijhawan",
-    "vanity_id": "MNijhawan9",
+    "alias": "MNijhawan9",
     "extra": {
       "location": "United Kingdom"
     },
@@ -104,7 +104,7 @@
     ]
   },
   {
-    "id": "wxid_j6362wqv6yqf22",
+    "username": "wxid_j6362wqv6yqf22",
     "name": "Simon",
     "confidence": "high",
     "sources": [
