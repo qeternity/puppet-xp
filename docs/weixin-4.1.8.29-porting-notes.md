@@ -3279,3 +3279,195 @@ Current confirmed alias pairs in this artifact are:
 This is the safest current translation table to use until the canonical contact
 row fetch path (`FUN_182509a40` / `FUN_18250a890` / `FUN_180bf9bd0`) is wired
 up directly in code.
+
+### Live Message Event Probes
+
+Two repo-local event probes now exist:
+
+- `scripts/monitor-weixin-message-events.py`
+- `scripts/monitor-weixin-receive-events.py`
+
+Current live result on `4.1.8.29`:
+
+- `monitor-weixin-message-events.py` hooks the materialized message iterator
+  `FUN_1813ff7c0`
+- `monitor-weixin-receive-events.py` hooks the msgsource/message-object parse
+  path `FUN_1809b17c0` (`parseIfNeeded`) and `FUN_18212a5c0` (`parseCore`)
+- both probes successfully classify:
+  - `conversation_id`
+  - `sender_username`
+  - `direction` (`sent` / `received`)
+  - `message_kind` (`user` / `system`)
+  - `timestamp`
+  - `content`
+  - `msgsource`
+
+Live verified send example:
+
+- `filehelper`
+  - sender: `wxid_yfe3gm54e5il12`
+  - direction: `sent`
+  - content: `hello`
+  - timestamp: `1775688145`
+
+Live verified group send example:
+
+- `27208021116@chatroom` (`Zuma Internal`)
+  - sender: `wxid_yfe3gm54e5il12`
+  - direction: `sent`
+  - content: `send test 1`
+  - timestamp: `1775688379`
+
+Important current limitation:
+
+- these probes fire when Weixin materializes or reparses message objects, not
+  yet at the precise earliest manager-signal edge
+- so they already support practical event-like emission, but they can replay
+  older resident rows on conversation refresh and are not yet the final minimal
+  "new message only" hook
+
+Practical interpretation:
+
+- `parseIfNeeded` is currently the strongest live event-adjacent hook
+- `FUN_1813ff7c0` is currently the strongest live structured-row hook
+- the next step for a cleaner production event stream is to join one of these
+  to the true manager-signal layer around `FUN_18155e440` so we only emit
+  genuinely new rows instead of full replayed slices
+
+## 2026-04-09 Manager-layer event hook checkpoint
+
+We moved off the replay-heavy query/row-transform family and attached directly to
+the `MessageManager` subscriber callback chain discovered from `FUN_18155e440`:
+
+- batch callback: `FUN_18154fb60`
+- single-item callback: `FUN_18154c6e0`
+- downstream dispatch: `FUN_18154bb80`
+
+Live probe script:
+
+- [scripts/monitor-weixin-manager-message-hook.py](/C:/Users/Administrator/Code/puppet-xp/scripts/monitor-weixin-manager-message-hook.py)
+
+Live result from a fresh unique send (`manager hook 1`):
+
+- only `dispatch_callback` fired
+- `batch_callback` did **not** emit a replayed `0x140` row range
+- `single_callback` did **not** emit a replayed item scan
+- the dispatch layer emitted two compact-object events for the fresh message and
+  did **not** replay the whole cached conversation slice
+
+Compact dispatch object observations (`FUN_18154bb80` `param_2`):
+
+- `+0x00` -> conversation id
+  - verified example: `27208021116@chatroom`
+- `+0x48` -> content
+  - verified example: `manager hook 1`
+- `+0xa8` -> sender username
+  - verified example: `wxid_yfe3gm54e5il12`
+- `+0x140` -> avatar/head image URL
+  - verified example: `https://mmhead.c2c.wechat.com/mmcrhead/...`
+- `+0x160` -> conversation title
+  - verified example: `Zuma Internal`
+
+This is significantly closer to the old `kDoAddMsg` behavior than the earlier
+`parseIfNeeded` / `FUN_181419100` probes, because it produces compact per-message
+dispatch objects instead of replaying materialized query slices.
+
+Important caveat:
+
+- the dispatch layer currently emitted the same fresh message twice, with
+  different `flag` values (`1` and `1178793217`)
+- so this path looks like a real event source, but still needs a duplicate gate
+  and a cleaner field map before it can be treated as the final production hook
+
+Follow-up after adding compact-object parsing plus a short duplicate gate:
+
+- fresh unique send `manager hook 2` produced exactly **one** manager-dispatch
+  event
+- no replayed cached conversation slice appeared behind it
+- parsed fields from the compact dispatch object were:
+  - `conversation_id = 27208021116@chatroom`
+  - `title = Zuma Internal`
+  - `sender_username = wxid_yfe3gm54e5il12`
+  - `direction = sent`
+  - `content = manager hook 2`
+  - `avatar_url = https://mmhead.c2c.wechat.com/mmcrhead/...`
+- candidate timestamp-like field:
+  - compact object `+0x90 = 1775689665`
+  - this is in the same numeric range as known message timestamps and should be
+    treated as the leading timestamp candidate for this compact event form
+
+Current interpretation:
+
+- `FUN_18154bb80` is now the strongest live candidate for the `4.1.8.29`
+  replacement of the old push-style receive/send hook
+- unlike `FUN_1813ff7c0`, `FUN_181419100`, or `parseIfNeeded`, this path can
+  emit a single fresh message event without replaying the whole cached query
+  slice
+- the next validation step is to confirm the same path on an actual received
+  message and to verify whether the `+0x90` field is always the event timestamp
+
+Current working plan:
+
+- treat `FUN_18154bb80` as the practical event hook for now
+- keep a short duplicate gate at this layer because the same fresh logical
+  message can be dispatched more than once with different flags
+- use the deduped compact dispatch object as the event payload source
+- treat `+0x90` as the leading timestamp candidate until disproven
+- keep `FUN_18154d4b0` as the analysis path for understanding the compact object
+  build step and, longer term, for possibly removing the need for duplicate
+  suppression
+
+Why duplicate suppression is currently required:
+
+- before the duplicate gate, a single fresh send produced two
+  `dispatch_callback` hits carrying the same logical message content
+- the duplicate pair differed by `flag` (`1` vs `1178793217`) but not by the
+  user-visible message identity
+- this is still much narrower than the replay-heavy query hooks because it is a
+  duplicate of one fresh event, not a replay of a whole conversation slice
+- after adding the duplicate gate, a fresh send (`manager hook 2`) produced
+  exactly one compact event
+
+Current recommended demo script:
+
+- [scripts/monitor-weixin-manager-message-hook.py](/C:/Users/Administrator/Code/puppet-xp/scripts/monitor-weixin-manager-message-hook.py)
+- this is the current repo-local demonstration of the working manager hook with
+  duplicate suppression applied
+
+Future TODO:
+
+- find a better upstream hook than `FUN_18154bb80` so duplicate suppression is
+  no longer necessary
+- the two best current leads are:
+  - `FUN_18154d4b0`, which builds the compact dispatch object before forwarding
+  - the true manager callback registration/subscriber chain rooted at
+    `FUN_18155e440`
+
+Related static note:
+
+- `FUN_1817c2c50` is called by `FUN_18154bb80` and forwards only when
+  `*(FUN_18007f0f0(param_2) + 0x10) != 0`, then dispatches via the receiver
+  vtable slot at `+0x48`
+- this reinforces that the manager callback chain is building and forwarding a
+  compact message object, not just replaying a query result row
+
+## 2026-04-09 One-step-earlier check
+
+We tested whether a static parent above `FUN_18154d4b0` would be a cleaner
+universal hook.
+
+Findings:
+
+- caller tracing from the clean `FUN_18154bb80` event resolved the immediate
+  parent to `FUN_18154d4b0`
+- static callers of `FUN_18154d4b0` are:
+  - `FUN_18154fb60` (known replay/batch path)
+  - `FUN_181555210` (targeted/matching path)
+- live probe on `FUN_181555210` did **not** fire for a fresh send
+
+Practical conclusion:
+
+- `FUN_181555210` is not a universal fresh-message parent
+- `FUN_18154bb80` remains the narrowest reliable live hook pinned so far
+- any future move earlier should probe `FUN_18154d4b0` directly rather than
+  assuming one of its static callers is the correct universal hook
