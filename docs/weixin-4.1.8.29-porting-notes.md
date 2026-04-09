@@ -3471,3 +3471,1257 @@ Practical conclusion:
 - `FUN_18154bb80` remains the narrowest reliable live hook pinned so far
 - any future move earlier should probe `FUN_18154d4b0` directly rather than
   assuming one of its static callers is the correct universal hook
+
+## 2026-04-09 Send-path checkpoint
+
+Old `3.9.2.23` send path recap from `src/init-agent-script.ts`:
+
+- native send manager getter:
+  - `WX_SEND_MESSAGE_MGR_OFFSET = 0x768140`
+- native text send:
+  - `WX_SEND_TEXT_OFFSET = 0xce6c80`
+- old flow:
+  - build x86 talker/content structs
+  - allocate `ecx` buffer
+  - pass talker in `edx`, content on the stack
+  - call text-send directly
+
+Live `4.1.8.29` send-side narrowing:
+
+- send-time resolver/caller cluster from dynamic tracing:
+  - `FUN_1815e7290`
+  - `FUN_1815e8200`
+  - `FUN_1815e9960`
+  - `FUN_1815766e0`
+  - `FUN_181576a40`
+  - wrapper family:
+    - `FUN_18282fd80`
+    - `FUN_182832260`
+
+Strongest send-request builder currently pinned:
+
+- `FUN_1815e8200`
+  - allocates a `0xf0` request object
+  - fills it through `FUN_1833fc800(...)`
+  - then runs it through a short submit pipeline
+- live probe on the request builder recovered:
+  - request object carries target conversation at `+0x38`
+  - verified example:
+    - `27208021116@chatroom`
+
+Important follow-up helpers:
+
+- `FUN_1815eb0d0`
+  - polymorphic/string extraction helper in the same send chain
+  - live probe hit both:
+    - one send-path callsite
+    - one unrelated UI/error string path (`Unable to send`)
+  - not yet a clean raw outgoing-text extractor
+
+Higher wrapper currently pinned:
+
+- `FUN_1815af8e0`
+  - resolves service context
+  - calls `FUN_1815e9960(..., param_1 + 8, 1)`
+  - then copies `param_1 + 0x20` into an async task object via
+    `FUN_180038880(...)`
+
+Current top-level send-entry result:
+
+- live probe on `FUN_1815af8e0` fired on a fresh send
+- recovered object did **not** expose a plain text string at `+0x20`
+- recovered string at `+0x38` looked like a request/task UUID:
+  - `ce5a3c71-e048-454b-b2ac-4b595592cbb4`
+- recipient vector elements were not plain inline `std::string` objects
+
+Current interpretation:
+
+- `FUN_1815af8e0` is a real top-level text-send wrapper
+- `FUN_1815e8200` is a real per-recipient send-request builder
+- the outgoing text is still one copy/serialization step away from the builder
+  fields we have directly decoded so far
+
+Next send-path target:
+
+- probe the `FUN_180038880(local_48, param_1 + 0x20)` copy inside
+  `FUN_1815af8e0`
+- this is the strongest current lead for where the human text is copied from the
+  top-level send wrapper into the async send task
+
+Follow-up results:
+
+- probing `FUN_180038880` inside `FUN_1815af8e0` showed that this copy does not
+  carry the human message body
+- on a fresh send it cloned the same UUID-like value from source to destination:
+  - `10d0d457-d39d-4d29-ae62-3eeb371d7e40`
+- decompilation confirms `FUN_180038880` is a composite-object clone helper, not
+  a plain string copy
+  - it clones nested virtual subobjects at slots `+0x48`, `+0x88`, `+0xc8`
+  - and a refcounted tail object around `+0xe0`
+- practical conclusion:
+  - `param_1 + 0x20` in `FUN_1815af8e0` is send metadata, not raw text
+
+Runtime caller trace above `FUN_1815af8e0`:
+
+- live backtrace did not reveal a simple direct code wrapper above
+  `FUN_1815af8e0`
+- stable code frames were:
+  - `FUN_180bef600`
+  - `FUN_1803e48d0`
+  - `FUN_1803e3710`
+  - `FUN_182454580`
+- `FUN_182454580` is a generic thread worker (`thread_run_`) that invokes a
+  task object virtual method, confirming the send path is being entered through
+  an async/task trampoline
+
+Current send-path interpretation:
+
+- `FUN_1815af8e0` is still a real top-level send wrapper
+- `FUN_1815e9960` is a strong multi-recipient/text-send wrapper beneath it
+- `FUN_1815e8200` is a strong per-recipient send-request builder
+- the human text has not yet been directly decoded from the top-level async task
+  object; it is likely still one object upstream of `FUN_1815af8e0` or inside a
+  nested subobject passed through the async task trampoline
+
+Task-payload copy checkpoint:
+
+- probing `FUN_1815affc0` (the payload copy into the async send task) recovered
+  a more structured object than the earlier UUID-only wrapper state
+- this payload currently looks like:
+  - string at `+0x08`: empty
+  - vector at `+0x28`: populated
+- live fresh-send result from the vector:
+  - first element resolves cleanly to the target conversation id
+    - `27208021116@chatroom`
+  - neighboring elements carry the same UUID-like operation id
+    - `85a7bb69-7b5f-4d7b-a5c7-652e3cf920ec`
+  - one later element carried the plain string `order`
+
+Current interpretation of `FUN_1815affc0` payload:
+
+- this is the first send-side object we have recovered that clearly contains the
+  real target conversation id in a structured vector form
+- it still does **not** expose the human outgoing body text directly
+- the outgoing text is therefore likely stored in:
+  - another sibling field of the same payload object, or
+  - a nested object referenced elsewhere in the async task
+
+Async scheduled-task checkpoint:
+
+- probing `FUN_180314950` (task scheduler) finally surfaced a send-task object
+  that carries the real outgoing body text together with sender, conversation,
+  and `msgsource`
+- this is currently the strongest send-side artifact in `4.1.8.29`
+- verified live task object example:
+  - task ptr:
+    - `0x183c31dd210`
+  - task strings:
+    - `+0x38` -> `wxid_yfe3gm54e5il12`
+    - `+0x58` -> `27208021116@chatroom`
+    - `+0x78` -> `wxid_yfe3gm54e5il12`
+    - `+0x98` -> `27208021116@chatroom`
+    - `+0xe0` -> `send sched 1`
+    - `+0x100` -> `<msgsource><alnode><fr>1</fr></alnode></msgsource>`
+  - nested payload at `task + 0x28`:
+    - `+0x10` -> `wxid_yfe3gm54e5il12`
+    - `+0x30` -> `27208021116@chatroom`
+    - `+0x50` -> `wxid_yfe3gm54e5il12`
+    - `+0x70` -> `27208021116@chatroom`
+- an earlier scheduler hit on a sibling task object also surfaced body text in a
+  nested payload window:
+  - `task + 0x110 + 0x00` -> `send deep 1`
+  - `task + 0x110 + 0x20` -> `p`
+- current interpretation:
+  - the scheduled async task object is the first send-side structure we have
+    recovered that reliably co-locates:
+    - self username
+    - target conversation id
+    - outgoing body text
+    - `msgsource`
+  - there are multiple scheduled task objects per send and many are noisy or
+    unrelated
+  - the remaining send-side job is to identify and filter the specific task
+    subtype that represents the real text-send operation
+
+Runnable send-task demo hook:
+
+- script:
+  - [scripts/monitor-weixin-send-task-hook.py](/C:/Users/Administrator/Code/puppet-xp/scripts/monitor-weixin-send-task-hook.py)
+- package entrypoint:
+  - `npm run monitor:send-task`
+- current extraction rule:
+  - hook `FUN_180314950`
+  - filter scheduled tasks down to those that expose:
+    - sender username
+    - conversation id
+    - outgoing body text
+  - prefer top-level layout:
+    - sender at `+0x38`
+    - conversation at `+0x58`
+    - body at `+0xe0`
+    - `msgsource` at `+0x100`
+  - fall back to nested copies:
+    - sender/conversation around `task + 0x28`
+    - body around `task + 0x110`
+- purpose:
+  - provide a clean demonstration of the currently best send-side hook candidate
+    without the raw scheduler noise from the exploratory probe
+- live verification:
+  - fresh send `send hook 1` emitted one clean `send_task_event`
+  - verified payload:
+    - `conversation_id` -> `27208021116@chatroom`
+    - `sender_username` -> `wxid_yfe3gm54e5il12`
+    - `direction` -> `sent`
+    - `content` -> `send hook 1`
+    - `msgsource` -> `<msgsource><alnode><fr>1</fr></alnode></msgsource>`
+  - in this clean hit, the top-level task layout was sufficient:
+    - body at `+0xe0`
+    - `msgsource` at `+0x100`
+    - sender / conversation pairs at `+0x38/+0x58` and `+0x78/+0x98`
+- TODO:
+  - further narrow the task subtype so the send-task monitor can rely on one
+    stable layout instead of top-level plus nested fallback parsing
+
+## 2026-04-09 Native arbitrary send proof
+
+Key send-side proof from the fresh `Weixin.exe` session:
+
+- top-level wrapper hook:
+  - `FUN_1815af8e0`
+- verified per-recipient source object under the wrapper:
+  - recipient vector at `wrapper + 0x08`
+  - first entry `pair.first -> source_obj`
+  - source fields:
+    - `source_obj + 0xb0` -> target conversation id
+    - `source_obj + 0x600` -> per-send UUID-like value
+    - `source_obj + 0x660` -> outgoing body text
+
+Live proof capture:
+
+- real seed send built this top-level wrapper:
+  - wrapper ptr: `0x25698d62e70`
+  - source obj: `0x256975ff000`
+  - before:
+    - conversation: `27208021116@chatroom`
+    - body: `h1`
+    - uuid: `25ba6d4f-14f9-4727-81f7-7704071d5906`
+- the in-flight hook rewrote only the source object:
+  - `+0xb0` from `27208021116@chatroom` to `27208021116@chatroom`
+  - `+0x660` from `h1` to `skynet`
+- the hook reported:
+  - after:
+    - conversation: `27208021116@chatroom`
+    - body: `skynet`
+
+Independent verification from the fresh send-task monitor on the same PID:
+
+- first task:
+  - content: `sed hijack 1`
+  - conversation: `27208021116@chatroom`
+- second task:
+  - content: `skynet`
+  - conversation: `27208021116@chatroom`
+  - sender: `wxid_yfe3gm54e5il12`
+  - direction: `sent`
+  - `msgsource`: `<msgsource><alnode><fr>1</fr></alnode></msgsource>`
+
+Interpretation:
+
+- this is the first successful native arbitrary-send proof for `4.1.8.29`
+- it did **not** rely on UI-driving the message box
+- it worked by hijacking a real top-level send wrapper in flight at
+  `FUN_1815af8e0` and rewriting the per-recipient source object before the
+  request builder consumed it
+
+Current proof scripts:
+
+- top-level hijack:
+  - [scripts/hijack-weixin-top-send.py](/C:/Users/Administrator/Code/puppet-xp/scripts/hijack-weixin-top-send.py)
+- top-level wrapper probe:
+  - [scripts/probe-weixin-send-top-wrapper.py](/C:/Users/Administrator/Code/puppet-xp/scripts/probe-weixin-send-top-wrapper.py)
+- request-source probe:
+  - [scripts/probe-weixin-send-request-source.py](/C:/Users/Administrator/Code/puppet-xp/scripts/probe-weixin-send-request-source.py)
+- send-task verifier:
+  - [scripts/monitor-weixin-send-task-hook.py](/C:/Users/Administrator/Code/puppet-xp/scripts/monitor-weixin-send-task-hook.py)
+
+Important caveat:
+
+- this is still a hijack of a real seed send, not yet a standalone synthetic
+  send constructor with no seed message at all
+- however, it proves the exact mutable fields that control the final native send
+  payload for text messages in `4.1.8.29`
+
+## 2026-04-09 Seed-template clone send
+
+Follow-on experiment after the `skynet` hijack proof:
+
+- script:
+  - [scripts/clone-weixin-top-wrapper-send.py](/C:/Users/Administrator/Code/puppet-xp/scripts/clone-weixin-top-wrapper-send.py)
+- goal:
+  - move beyond in-place hijack by cloning a valid top-level
+    `FUN_1815af8e0` wrapper tree from a real seed send
+  - rewrite the clone to a target conversation/body
+  - invoke `FUN_1815af8e0(cloned_wrapper)` directly
+
+Current clone strategy:
+
+- copy `0x120` bytes of the live top-level wrapper
+- copy one `0x10` recipient pair entry
+- copy one `0x700` source object
+- rewrite only:
+  - `source_clone + 0xb0` -> target conversation
+  - `source_clone + 0x660` -> target body
+- keep the original UUID at `source_clone + 0x600`
+- keep the original `pair.second` pointer unchanged
+
+Live test on the fresh UI process:
+
+- trigger body:
+  - `c1`
+- target:
+  - conversation `27208021116@chatroom`
+  - body `synthetic1`
+- clone hook emitted:
+  - `top_wrapper_clone_ready`
+  - original wrapper `0x2569dd515a0`
+  - cloned wrapper `0x25695f95b80`
+  - original source `0x2569df49470`
+  - cloned source `0x25698e76720`
+  - before:
+    - conversation `27208021116@chatroom`
+    - body `c1`
+    - uuid `76ffff31-cef1-4a5c-92cd-9ba961c898f4`
+  - after:
+    - conversation `27208021116@chatroom`
+    - body `synthetic1`
+    - same uuid
+
+Independent verification from the clean send-task monitor:
+
+- [scripts/monitor-weixin-send-task-hook.py](/C:/Users/Administrator/Code/puppet-xp/scripts/monitor-weixin-send-task-hook.py)
+- emitted a fresh `send_task_event` with:
+  - `conversation_id` -> `27208021116@chatroom`
+  - `content` -> `synthetic1`
+  - `sender_username` -> `wxid_yfe3gm54e5il12`
+  - `direction` -> `sent`
+  - `msgsource` -> `<msgsource><alnode><fr>1</fr></alnode></msgsource>`
+
+Critical nuance:
+
+- the clone invocation then faulted with:
+  - `Error: access violation accessing 0x0`
+- but that fault happened *after* the fresh `synthetic1` send-task event was
+  observed
+- this means the cloned wrapper path is now good enough to schedule a real send,
+  but it is not yet stable for cleanup/follow-on ownership handling
+
+Current interpretation:
+
+- the remaining blocker is no longer "can a cloned valid wrapper produce a new
+  send?" because the answer is now yes
+- the remaining blocker is a missing cloned-owned side object or refcounted
+  companion pointer that is dereferenced later in the send lifecycle
+- the most suspicious field is still the unchanged `pair.second` pointer and/or
+  wrapper metadata/state outside the copied `source_obj`
+
+Updated send-state summary:
+
+- in-place top-wrapper hijack:
+  - proven and stable enough for controlled testing
+- seed-template cloned wrapper:
+  - proven to schedule a second native send
+  - not yet stable due post-schedule access violation
+- fully synthetic zero-seed send:
+  - not yet achieved
+
+TODO:
+
+- identify which companion object behind `pair.second` or wrapper metadata must
+  also be cloned or reconstructed
+- determine whether the post-schedule null dereference happens in task cleanup,
+  subscriber notification, or send completion bookkeeping
+
+Additional source-object ownership finding from a fresh real send:
+
+- real send source object:
+  - `source_obj = owner_base + 0x10`
+- live back-pointers inside the source object:
+  - `source_obj + 0x08 -> source_obj`
+  - `source_obj + 0x10 -> owner_base`
+- live owner header refcounts for the tested source:
+  - `owner_base + 0x08 = 5`
+  - `owner_base + 0x0c = 2`
+
+Implication:
+
+- a relocated clone must not only copy the owner block and source object data
+- it must also rebase the embedded self/owner pointers inside the source object
+- earlier clone attempts did not keep these internal pointers consistent, which
+  is a strong candidate explanation for the post-schedule fault
+
+## 2026-04-09 Stronger synthetic send proof
+
+After rebasing the source object's internal back-pointers in the cloned owned
+block:
+
+- `source_clone + 0x08 -> source_clone`
+- `source_clone + 0x10 -> owned_clone`
+
+the cloned-wrapper path produced a stronger result on the fresh UI PID `10312`.
+
+Live trigger:
+
+- real seed body:
+  - `c3`
+- cloned target body:
+  - `synthetic3`
+- target conversation:
+  - `27208021116@chatroom`
+
+Clone hook output:
+
+- `top_wrapper_clone_ready`
+  - original wrapper `0x295caeb1d20`
+  - cloned wrapper `0x295d22e8800`
+  - original source `0x295d21ee7f0`
+  - original owner `0x295d21ee7e0`
+  - cloned owner `0x295d2033510`
+  - cloned source `0x295d2033520`
+  - body rewritten from `c3` to `synthetic3`
+- the hook still reported:
+  - `Error: access violation accessing 0x0`
+
+However, the important runtime proof is stronger than before:
+
+- send-task hook emitted:
+  - `content -> c3`
+  - `content -> synthetic3`
+- manager-dispatch hook also emitted:
+  - `content -> c3`
+  - `content -> synthetic3`
+  - both for:
+    - `conversation_id -> 27208021116@chatroom`
+    - `title -> Zuma Internal`
+    - `sender_username -> wxid_yfe3gm54e5il12`
+    - `direction -> sent`
+
+Interpretation:
+
+- `synthetic3` is now proven by the stronger success criterion:
+  - not only scheduled as a send task
+  - but also observed on the manager-level message dispatch path
+- this is the strongest evidence so far that the cloned top-wrapper path can
+  produce a real native send without UI textbox driving
+
+Remaining caveat:
+
+- the clone invocation still throws an access-violation error in the hook
+- but on this run it did not kill the main Weixin UI process, and the synthetic
+  message still propagated through the manager-dispatch hook
+- so the current state is:
+  - functional synthetic send path: yes
+  - stable/clean synthetic send path: not yet
+
+## 2026-04-09 Stronger send success criterion
+
+The scheduler hook alone is not enough to prove a message was truly sent.
+
+Reason:
+
+- [scripts/monitor-weixin-send-task-hook.py](/C:/Users/Administrator/Code/puppet-xp/scripts/monitor-weixin-send-task-hook.py)
+  only proves that Weixin scheduled a send task object
+- that is useful, but not sufficient to distinguish:
+  - a task that is merely constructed/scheduled
+  - a message that actually propagates through the message/session dispatch path
+
+Fresh-session verification on UI PID `10312`:
+
+- send-task hook emitted:
+  - `conversation_id` -> `27208021116@chatroom`
+  - `content` -> `deliver probe 1`
+  - `sender_username` -> `wxid_yfe3gm54e5il12`
+- manager-dispatch hook simultaneously emitted:
+  - `conversation_id` -> `27208021116@chatroom`
+  - `title` -> `Zuma Internal`
+  - `sender_username` -> `wxid_yfe3gm54e5il12`
+  - `direction` -> `sent`
+  - `content` -> `deliver probe 1`
+  - candidate timestamp field `+0x90` -> `1775717336`
+
+The same manager-dispatch hook also surfaced the earlier native proof send:
+
+- `content` -> `skynet`
+- same conversation and sender
+
+Updated rule for future synthetic-send experiments:
+
+- `send_task_event` is necessary but not sufficient
+- the stronger proof of success is a matching
+  `manager_message_event` from `FUN_18154bb80`
+- future send experiments should only be counted as successful when the manager
+  dispatch hook confirms the same message content/conversation
+
+## 2026-04-09 Lower-level same-thread synthetic send
+
+After the standalone lower-level sender crashed the process when calling the
+`FUN_1815e8200` family out of band, the next experiment moved that same logic
+back into the real send thread as a hijack of one live seed send.
+
+New script:
+
+- [scripts/hijack-weixin-lower-send.py](/C:/Users/Administrator/Code/puppet-xp/scripts/hijack-weixin-lower-send.py)
+
+What this path does:
+
+- hook the real top-level send wrapper `FUN_1815af8e0`
+- wait for a seed send with a specific trigger body
+- clone only the lower-level source owner block and source object, not the full
+  top wrapper
+- fetch the real global send context through:
+  - `FUN_180020800`
+  - `FUN_1802fbff0`
+  - `FUN_180633270`
+- build the per-recipient request directly through:
+  - `FUN_1815e8200(..., mode=1)`
+- create the task tail with:
+  - `FUN_1800f7b40`
+  - `FUN_180038880`
+  - `FUN_1815affc0`
+  - `FUN_180182c10`
+  - `FUN_180314950`
+
+Fresh-session live test on UI PID `9116`:
+
+- trigger body:
+  - `llseed1`
+- synthetic target:
+  - conversation `27208021116@chatroom`
+  - body `llsynthetic3`
+
+Stage trace from the hook:
+
+- reached:
+  - `clone_owner`
+  - `clone_source`
+  - `rewrite_strings`
+  - `build_pair`
+  - `get_root`
+  - `get_service`
+  - `get_send_ctx`
+  - `call_builder`
+  - `alloc_task`
+  - `init_task`
+  - `copy_meta`
+  - `copy_payload`
+- then the hook reported:
+  - `Error: system error`
+  - at stage `copy_payload`
+
+However, despite that hook-level error, the synthetic send itself propagated:
+
+- send-task hook emitted:
+  - `conversation_id -> 27208021116@chatroom`
+  - `content -> llsynthetic3`
+  - `sender_username -> wxid_yfe3gm54e5il12`
+- manager-dispatch hook emitted:
+  - `conversation_id -> 27208021116@chatroom`
+  - `title -> Zuma Internal`
+  - `content -> llsynthetic3`
+  - `sender_username -> wxid_yfe3gm54e5il12`
+  - `direction -> sent`
+
+The same run also emitted the original seed send:
+
+- `llseed1`
+
+Interpretation:
+
+- this is a stronger synthetic-send path than the full-wrapper clone:
+  - it reuses the real send thread/context
+  - it avoids cloning the entire top wrapper object graph
+- it is now proven that the smaller lower-level path can produce a real native
+  send confirmed by both:
+  - the scheduler/send-task hook
+  - the manager-dispatch hook
+- a residual hook-level error still occurs around the payload-copy/scheduling
+  tail, but:
+  - it did not crash `Weixin.exe`
+  - it did not prevent the synthetic send from propagating
+
+Current best send-state summary:
+
+- in-place top-wrapper field hijack:
+  - proven
+- full top-wrapper clone:
+  - proven once, but unstable and crash-prone
+- standalone lower-level source-template call:
+  - still unsafe/crashy out of band
+- lower-level same-thread hijack:
+  - proven
+  - currently the best synthetic-send technique for `4.1.8.29`
+
+TODO:
+
+- determine why the lower-level same-thread path reports `Error: system error`
+  after `copy_payload` even though the message is successfully dispatched
+- tighten the hook so it emits only one synthetic event copy
+- turn the current Python/Frida prototype into the injected agent send path
+
+Repro confirmation on the same fresh session:
+
+- trigger body:
+  - `llseed2`
+- synthetic target body:
+  - `llsynthetic4`
+- same target conversation:
+  - `27208021116@chatroom`
+
+Result:
+
+- reached the same stage boundary:
+  - through `copy_payload`
+  - then reported `Error: system error`
+- still produced both proof signals:
+  - `send_task_event -> llsynthetic4`
+  - `manager_message_event -> llsynthetic4`
+- Weixin UI process remained alive after the run
+
+Conclusion:
+
+- the lower-level same-thread hijack is not a one-off
+- it has now reproduced on at least two synthetic bodies:
+  - `llsynthetic3`
+  - `llsynthetic4`
+- the remaining `copy_payload`/`system error` issue is a cleanup/stability
+  concern, not a blocker for proving native synthetic send capability
+
+Third confirmation on a fresh UI session (`Weixin.exe` PID `10976`):
+
+- trigger body:
+  - `llseed3`
+- synthetic target body:
+  - `llsynthetic5`
+- same target conversation:
+  - `27208021116@chatroom`
+
+Refined stage tracing now shows the residual fault more precisely:
+
+- the synthetic path reaches:
+  - `clone_owner_prepare`
+  - `clone_owner_copy`
+  - `clone_owner_rebase`
+  - `clone_source_locate`
+  - `clone_source_fix_backrefs`
+  - `rewrite_strings_conversation`
+  - `rewrite_strings_body`
+  - `build_pair`
+  - `get_root_prepare`
+  - `get_root_call`
+  - `get_service_prepare`
+  - `get_service_call`
+  - `get_send_ctx_prepare`
+  - `get_send_ctx_call`
+  - `call_builder_prepare`
+  - `call_builder_call`
+  - `alloc_task`
+  - `init_task_call`
+  - `copy_meta_prepare`
+  - `copy_meta_call`
+  - `copy_payload_call`
+- and then throws:
+  - `Error: system error`
+  - at exactly `copy_payload_call`
+
+Despite that, the synthetic send still propagated and was proven by both hooks:
+
+- `send_task_event -> llsynthetic5`
+- `manager_message_event -> llsynthetic5`
+
+New nuance from this run:
+
+- the send-task hook reported the same `task_ptr` for:
+  - `llseed3`
+  - `llsynthetic5`
+- the manager-dispatch hook also reported the same `event_ptr` for:
+  - `llseed3`
+  - `llsynthetic5`
+
+Interpretation:
+
+- the lower-level same-thread hijack is very likely piggybacking on, mutating,
+  or aliasing the same task/event object lineage as the original seed send
+- this likely explains why:
+  - the synthetic message can propagate successfully
+  - while a residual `system error` is still thrown at `copyTaskPayload`
+- the next stabilization task is therefore not just "make the error go away"
+  but:
+  - determine whether a truly independent synthetic task object can be created
+  - or whether the current path should be treated as an in-place mutation of the
+    live seed task
+
+Fourth confirmation on the same UI session (`Weixin.exe` PID `10976`) changed
+that interpretation in an important way.
+
+- trigger body:
+  - `llseed4`
+- trigger conversation:
+  - `filehelper`
+- synthetic target body:
+  - `llsynthetic6`
+- synthetic target conversation:
+  - `27208021116@chatroom`
+
+Refined task-pointer instrumentation showed:
+
+- allocated synthetic task object:
+  - `0x20cb9c64800`
+- actual `send_task_event` for `llsynthetic6`:
+  - task pointer `0x20cb96d53b0`
+- actual `send_task_event` for seed `llseed4`:
+  - task pointer `0x20cb96d5b50`
+
+This means:
+
+- the synthetic send is *not* merely reusing the original seed task pointer
+- and it is *not* the same object as the explicitly allocated `taskObj` in the
+  current hook either
+
+The same run also shifted the fault boundary:
+
+- this time the hook failed earlier with:
+  - `Error: access violation accessing 0xffffffffffffffff`
+  - at `copy_meta_call`
+- but the synthetic message still propagated and was proven by:
+  - `send_task_event -> llsynthetic6`
+  - `manager_message_event -> llsynthetic6`
+
+Updated interpretation:
+
+- the lower-level same-thread path is successfully inducing a real synthetic
+  send to a different conversation, even when seeded from `filehelper`
+- the actual scheduled send task for the synthetic message is being produced
+  downstream by Weixin, rather than by directly scheduling our explicit
+  `taskObj`
+- therefore the currently most valuable part of the path is:
+  - the builder invocation and its side effects
+  - not the explicit task-allocation/scheduling tail after it
+
+New stabilization direction:
+
+- try trimming or bypassing the explicit tail:
+  - `alloc_task`
+  - `init_task`
+  - `copy_meta`
+  - `copy_payload`
+  - `init_sched_ctx`
+  - `schedule`
+- and see whether `FUN_1815e8200(..., mode=1)` on the real send thread is
+  already sufficient to cause the downstream synthetic task to be materialized
+
+Builder-only confirmation on the same UI session (`Weixin.exe` PID `10976`):
+
+- trigger body:
+  - `llseed5`
+- trigger conversation:
+  - `filehelper`
+- synthetic target body:
+  - `llsynthetic7`
+- synthetic target conversation:
+  - `27208021116@chatroom`
+
+New script mode:
+
+- [scripts/hijack-weixin-lower-send.py](/C:/Users/Administrator/Code/puppet-xp/scripts/hijack-weixin-lower-send.py)
+  with:
+  - `--builder-only`
+
+What this mode does:
+
+- hook the real top-level send wrapper on the real send thread
+- clone and rewrite only the lower-level source owner/source object
+- fetch the real global send context
+- call:
+  - `FUN_1815e8200(sendCtx, resultBuf, pairBuf, 1)`
+- stop there
+- do *not* run the explicit tail:
+  - `alloc_task`
+  - `init_task`
+  - `copy_meta`
+  - `copy_payload`
+  - `init_sched_ctx`
+  - `schedule`
+
+Result:
+
+- no hook error
+- no crash
+- synthetic send still propagated and was proven by both hooks:
+  - `send_task_event -> llsynthetic7`
+  - `manager_message_event -> llsynthetic7`
+- seed send also propagated independently:
+  - `send_task_event -> llseed5`
+
+Important implication:
+
+- the explicit task-allocation/scheduling tail is not required for the working
+  synthetic send path
+- the real useful primitive is:
+  - builder invocation on the real send thread with a rewritten lower-level
+    source object
+- the downstream synthetic task is then materialized by Weixin itself
+
+Updated best send-state summary:
+
+- in-place top-wrapper field hijack:
+  - proven
+- full top-wrapper clone:
+  - proven once, but unstable and crash-prone
+- lower-level same-thread hijack with explicit tail:
+  - proven, but noisy/error-prone
+- lower-level same-thread hijack, builder-only:
+  - proven
+  - cleanest successful synthetic send path so far
+  - current best candidate for agent porting
+
+Autonomous send follow-up, fresh-session branch:
+
+- after a fresh WeChat restart there are no reusable live send-source objects in
+  memory until something creates them
+- broad source-object scans that worked on older sessions came back empty on a
+  fresh session
+- this means a truly autonomous send path needs either:
+  - a constructor path that can build a complete source object from scratch, or
+  - a smaller upstream helper that enriches the generic source object enough for
+    `FUN_1815e8200`
+
+Static send-path correction from Ghidra:
+
+- `FUN_180633150`
+  - allocates a generic `0x6b0` source/owner pair
+  - returns:
+    - `pair[0] = source`
+    - `pair[1] = owner`
+- `FUN_180696170`
+  - is only the generic source-object initializer
+  - it does not appear to populate the richer send-specific state required by
+    the later builder path
+- `FUN_181664250`
+  - is not a generic text-send function
+  - it is a chatroom-oriented helper that:
+    - validates `@chatroom` targets
+    - consumes a vector of `0x28` message-part records
+    - internally calls `FUN_180633150`
+    - fills the target conversation into the source object
+    - builds the text payload via `FUN_1800b44a0` / `FUN_1804c9820`
+    - finally calls `FUN_1815e8200(..., mode=0)`
+- `FUN_1833fc800` / `FUN_1833fccd0`
+  - remain the first failing point for the fresh autonomous `mode=1` builder
+    branch
+  - the failure happens before the later task-materialization helpers
+- `FUN_181437e20`
+  - is a promising richer source-object setup helper
+  - it is called from `FUN_1817d1a00`, which runs after the generic source init
+  - this is a likely lead for the missing send-specific source state
+
+Current autonomous send script state:
+
+- [scripts/send-weixin-text-autonomous.py](/C:/Users/Administrator/Code/puppet-xp/scripts/send-weixin-text-autonomous.py)
+  now includes a second fresh autonomous mode:
+  - `--mode fresh-pair1`
+- `fresh-pair1` does:
+  - call `FUN_180633150` directly to create a fresh source/owner pair
+  - rewrite:
+    - `source + 0xb0` conversation
+    - `source + 0x600` UUID
+    - `source + 0x660` body
+    - `source + 0x9c = 1`
+    - `source + 0xd8 = 1`
+  - fetch the real global send context
+  - call `FUN_1815e8200(sendCtx, resultBuf, pairBuf, 1)`
+- this mode is meant to replace the earlier ad hoc inline `mode=1` builder test
+  so the next live run is reproducible from a repo script
+
+Fresh-pair correction from live source diff:
+
+- a real live text-send source object has:
+  - `source + 0x9c = 1`
+  - `source + 0xa4 = 7`
+  - `source + 0xc0 = conversation length`
+  - `source + 0xc8 = conversation string capacity`
+  - `source + 0xd8 = 1`
+- the old `0xd8 = 10000` write came from the canned helper/system-message path
+  and does not match a normal text-send source
+- `FUN_180633150` already initializes the owner/source back-pointers and the
+  `+0x600` UUID slot correctly
+- after rewriting the fresh pair with:
+  - `conversation = 27208021116@chatroom`
+  - `body = skynet`
+  - `0x9c = 1`
+  - `0xd8 = 1`
+  the object matches a real live text-send source much more closely
+
+Thread-context correction:
+
+- Frida on this VM supports `Process.runOnThread`
+- running the fresh autonomous builder path on the real WeChat UI thread
+  (`12220` on the current logged-in session) fixed the earlier thread-context
+  mismatch and allowed `FUN_1815e8200` to run on the same thread class as the
+  proven lower-send hijack
+- however, the autonomous fresh-pair path still crashes WeChat later in
+  `roam_server.dll` with:
+  - `Application Error 1000`
+  - exception `0xc0000409`
+  - module `roam_server.dll`
+- interpretation:
+  - the builder now runs in the correct thread context
+  - but a downstream roam/send dependency is still missing from the bare fresh
+    pair, even though the source object itself now resembles a live text-send
+    source much more closely
+
+Autonomous follow-up on the refreshed logged-in UI sessions:
+
+- a structural live-template scan script was added:
+  - [scripts/scan-weixin-live-send-templates.py](/C:/Users/Administrator/Code/puppet-xp/scripts/scan-weixin-live-send-templates.py)
+- it now uses Frida's async range enumeration API, which is the only supported
+  range enumeration surface on this VM's runtime
+- result on a fresh logged-in `WeChat` UI process:
+  - `count = 0`
+  - there are no resident lower-send source/owner blocks in memory before a
+    real send creates them
+- implication:
+  - autonomous send cannot rely on scavenging a pre-existing live template in a
+    fresh session
+  - we still need either:
+    - a complete constructor path, or
+    - a richer builder/wrapper path that can synthesize the missing state
+
+New autonomous constructor correction on the fresh logged-in session:
+
+- the real long-lived richer builder object is present even before a user send:
+  - live builder owner: `0x1d1c8ba0740`
+  - embedded builder object: `0x1d1c8ba0750`
+  - builder owner vtable: `Weixin.dll + 0x7ebc1d8`
+  - builder vtable: `Weixin.dll + 0x81214f8`
+- the builder owner is constructed by:
+  - `FUN_180681e90`
+- `FUN_180681e90`:
+  - allocates `0xdb0`
+  - sets owner vtable to `PTR_FUN_187ebc1d8`
+  - sets refcount to `0x100000001`
+  - calls `FUN_1815e1360(owner + 0x10)`
+  - returns:
+    - `out[0] = owner + 0x10` (embedded builder)
+    - `out[1] = owner`
+- correction:
+  - the missing problem is not the richer builder object; it already exists
+  - the remaining blocker is still the lower source pair/state that feeds the
+    send item constructor cleanly
+
+Generic lower-send pair baseline from a real live send:
+
+- the generic `mode=1` live pair observed at `FUN_1815e8200` caller
+  `Weixin.dll + 0x15e9c0b` is:
+  - source: `0x224c7658050`
+  - owner: `0x224c7658040`
+  - owner vtable: `Weixin.dll + 0x7ebe6f8`
+  - owner refs: `{7, 2}`
+  - owner `+0x18 -> source`
+- live source fields:
+  - `+0xb0 = 27208021116@chatroom`
+  - `+0x600 = 72f4d4a7-595d-473f-b6da-427bc3eac828`
+  - `+0x660 = pair probe 1`
+  - `+0x9c = 1`
+  - `+0xd8 = 1`
+- notably, the surrounding optional string fields are still empty on the real
+  live pair:
+  - `+0x48`
+  - `+0x88`
+  - `+0x180`
+  - `+0x240`
+  - `+0x270`
+- implication:
+  - the real generic send path is far thinner than expected
+  - the autonomous blocker is not "populate lots of extra string fields"
+
+Fresh-pair direct baseline from `FUN_180633150`:
+
+- a fresh ctor dump on the live UI thread produced:
+  - source: `0x224c7655e40`
+  - owner: `0x224c7655e30`
+  - same owner vtable: `Weixin.dll + 0x7ebe6f8`
+  - owner refs: `{1, 2}`
+  - owner `+0x18 -> source`
+  - `+0x600` already contains a UUID
+  - `+0x9c = 1`
+  - `+0xd8 = 0`
+  - target/body strings empty by default
+- correction:
+  - the fresh pair and live generic pair are the same object family
+  - the remaining differences are more subtle than class/vtable mismatch
+  - the high-signal deltas are:
+    - `owner.ref_a = 7` vs `1`
+    - `source + 0xd8 = 1` vs `0`
+
+Autonomous retry after matching the live generic pair more closely:
+
+- `send-weixin-text-autonomous.py --mode fresh-batch1`
+  - patched to use the live-observed owner refs `{7,2}` instead of `{5,2}`
+  - still rewrites:
+    - `+0xb0 = conversation`
+    - `+0x600 = uuid`
+    - `+0x660 = body`
+    - `+0x9c = 1`
+    - `+0xd8 = 1`
+  - result:
+    - no early local `invoke_error`
+    - script was destroyed before final state
+    - Windows event log confirms another crash in:
+      - `roam_server.dll`
+      - `Application Error 1000`
+      - crash time `2026-04-09 14:28:22`
+      - exception `0xc0000409`
+- implication:
+  - matching the obvious live header fields improves the path, but does not yet
+    make the fresh autonomous generic send stable
+  - the remaining missing state is subtler than:
+    - owner class
+    - owner refcount header
+    - `0xd8`
+    - target/body/uuid fields
+
+Current-session lower-pair conclusion on PID `6516`:
+
+- fresh baseline on the live UI thread:
+  - owner vtable: `Weixin.dll + 0x7ebe6f8`
+  - owner refs `{1,2}`
+  - `source + 0xd8 = 0`
+  - `source + 0x600` already contains a UUID
+  - `source + 0x680` exists but is empty
+- real live generic send (`pair probe 5`) on the same process:
+  - same owner vtable: `Weixin.dll + 0x7ebe6f8`
+  - owner refs `{7,2}`
+  - `source + 0xd8 = 1`
+  - `source + 0xb0` conversation capacity `31`
+  - `source + 0x600` UUID capacity `47`
+  - `source + 0x660` inline body
+  - `source + 0x680` still empty
+- fresh ctor does *not* hide any additional non-empty string payload in:
+  - `+0x48`
+  - `+0x88`
+  - `+0x180`
+  - `+0x240`
+  - `+0x270`
+  - `+0x680`
+
+Critical autonomous send result from the corrected `fresh-pair1` path:
+
+- `send-weixin-text-autonomous.py --mode fresh-pair1 --body skynet`
+  was patched to match the live pair more closely:
+  - owner refs `{7,2}`
+  - `source + 0xd8 = 1`
+  - conversation string capacity `31`
+  - UUID capacity `47`
+- the live lower-source probe captured that autonomous object entering
+  `FUN_1815e8200`, and it now matches the real live send pair structurally:
+  - same owner class
+  - same `ref_a = 7`
+  - same `ref_b = 2`
+  - same `+0xd8 = 1`
+  - same empty optional string slots
+  - same empty `+0x680`
+  - target/body/uuid all present as expected
+- despite that, the call still failed:
+  - local path: `invoke_error` in `fresh_pair_build`
+  - then later `fresh-batch1` still crashed `Weixin.exe` in `roam_server.dll`
+
+Corrected interpretation after this result:
+
+- the autonomous blocker is no longer in the lower source pair layout itself
+- we now have strong evidence that the lower source pair can be synthesized to
+  match a real live send
+- the remaining failure must be in deeper call context or downstream state, for
+  example:
+  - the exact `param_2` / output buffer expectations for `FUN_1815e8200`
+  - caller-side stack / wrapper context that the direct call path normally sets
+  - later send/roam state outside the lower pair itself
+
+Additional constructor-family findings after the current-session comparison:
+
+- the source/owner family has two constructor paths with the same owner vtable
+  (`Weixin.dll + 0x7ebe6f8`) but different initializers:
+  - `FUN_180633150 -> FUN_180696170`
+  - `FUN_180697630 -> FUN_180697740`
+- `FUN_180697740` explicitly copies two string slots into the source object:
+  - `source + 0x660`
+  - `source + 0x680`
+- current-session live generic pair on PID `6516` still shows:
+  - `+0x660 = pair probe 5`
+  - `+0x680 = ''`
+- implication:
+  - there is no hidden second non-empty body string in the live generic pair
+  - the extra initializer family is real, but `+0x680` is not the missing live
+    payload for ordinary sends
+
+Deeper builder-context shift:
+
+- `FUN_1815eb0d0` is not a benign output-copy helper:
+  - it performs a typed extraction / cast and materializes a structured object
+    from the `local_68` object passed down by `FUN_1815e8200`
+- `FUN_1815eb320` and `FUN_1815ebec0` are heavily stateful:
+  - they insert/look up per-target entries in builder-owned maps
+  - they call into the message iterator (`FUN_1833ff7c0`) and other task/cache
+    plumbing
+  - they depend on `builder->0xb78` map state and per-target entry evolution
+- current corrected interpretation:
+  - the lower source pair can now be synthesized to match a real live send
+  - the remaining blocker is more likely:
+    - deeper builder-owned map state
+    - per-target cache/task evolution
+    - or `param_2` / intermediate object expectations inside
+      `FUN_1815e8200 -> FUN_1815eb0d0`
+  - less likely:
+    - any remaining missing field inside the lower source pair itself
+
+Per-send item constructor correction:
+
+- the previously "mystery" per-send item vtable is:
+  - `Weixin.dll + 0x8123cd8`
+- that item is constructed directly inside:
+  - `FUN_1815e8200`
+- `FUN_1815e8200`:
+  - allocates `0xf0`
+  - sets `item.vtable = PTR_FUN_188123cd8`
+  - calls:
+    - `FUN_1833fc800(item + 0x10, param_3, param_4)`
+  - then runs the internal map/task plumbing:
+    - `FUN_1815eb320`
+    - `FUN_1815ebec0`
+    - `FUN_1815eb0d0`
+- implication:
+  - the open problem is no longer "find the item constructor"
+  - the real problem is supplying a lower source pair rich enough that
+    `FUN_1833fc800` / downstream send and roam code accept it
+
+Lower source -> item population findings:
+
+- `FUN_1833fc800` initializes the item from the lower source pair and mode
+- `FUN_1833fccd0` is the deeper metadata builder used by that path
+- `FUN_1833fccd0` reads many fields from the lower source object beyond just:
+  - conversation `+0xb0/+0xc0`
+  - body-ish strings
+  - a large set of additional metadata and helper refs
+- importantly, `FUN_1833fccd0` also internally creates a fresh lower pair via:
+  - `FUN_180633150`
+  - then calls `FUN_1815e8200(..., mode=0)`
+- implication:
+  - the internal autonomous-ish path exists, but the bare `FUN_180633150`
+    fresh pair still lacks enough downstream state for our direct autonomous
+    reuse
+
+Top-level autonomous-ish wrapper correction:
+
+- `FUN_181664250` is still a valid top-level autonomous-ish wrapper candidate
+- but it internally falls back into the same fragile fresh lower-pair path:
+  - `FUN_180633150`
+  - `FUN_180633270`
+  - `FUN_1815e8200(..., 0)`
+- this explains why the old `fresh` branch could get deeper than the plain
+  fresh-pair probe while still eventually failing/crashing
+
+Fresh autonomous live experiments on the current session:
+
+- `send-weixin-text-autonomous.py --mode fresh-hijack1`
+  - new branch that lets `FUN_181664250` build its transient lower pair and
+    flips the internal `FUN_1815e8200(..., 0)` call to `mode=1` if reached
+  - result on the current logged-in session:
+    - failed before `FUN_1815e8200` was ever reached
+    - script reported:
+      - `invoke_error` at `fresh_call_ctor`
+      - `access violation accessing 0x0`
+    - no `fresh_pair_captured`
+    - no send-task event
+    - no manager event
+  - implication:
+    - the current `FUN_181664250` invocation is still malformed *before* the
+      internal `1815e8200` handoff point
+
+- `send-weixin-text-autonomous.py --mode fresh-trace`
+  - new trace branch to log the last internal callees reached by
+    `FUN_181664250` on the real UI thread
+  - current result:
+    - on the first run, the trace completed cleanly enough to preserve counts:
+      - `validate_target`
+      - `alloc_filtered_vec`
+      - `prepare_msg_map`
+      - `get_root`
+      - `get_service`
+      - `resolve_msg_service`
+      - `enrich_msg_entries`
+      - `grow_filtered_vec`
+    - it then failed with:
+      - `invoke_error`
+      - stage `fresh_call_ctor`
+      - `access violation accessing 0x0`
+      - no `fresh_pair_captured`
+      - no send-task event
+      - no manager event
+    - on the next tighter run, WeChat crashed again in `roam_server.dll`
+      - `Application Error 1000`
+      - `Windows Error Reporting 1001`
+      - crash time `2026-04-09 14:03:17`
+      - module `roam_server.dll`
+      - exception `0xc0000409`
+      - Frida lost the script immediately after `fresh_build_entry`
+  - current narrowed interpretation:
+    - `FUN_181664250` is definitely getting through the initial target/message
+      validation and message-service enrichment phases
+    - the malformed input is now narrowed to the post-enrichment, pre-send
+      window, very likely around the transient message-map insertion / filtered
+      entry handling that happens before `FUN_1815e8200` is reached
+    - `insert_msg_map_entry` (`FUN_1801d1170`) has not yet been observed firing
+      on the failing autonomous path
+  - implication:
+    - `FUN_181664250` remains the right family to study, but it still reaches
+      the same downstream roam crash boundary if we let it run too far with the
+      current handcrafted inputs
+
+New autonomous wrapper experiments:
+
+- `send-weixin-text-autonomous.py --mode fresh-batch1`
+  - new branch that:
+    - creates a fresh generic pair via `FUN_180633150`
+    - rewrites:
+      - `+0xb0 = conversation`
+      - `+0x600 = uuid`
+      - `+0x660 = body`
+      - `+0x9c = 1`
+      - `+0xd8 = 1`
+      - owner refs `{5,2}`
+    - builds a one-element pair vector
+    - calls:
+      - `FUN_1815e9960(sendCtx, resultBuf, vec, 1)`
+    - on the real UI thread via `Process.runOnThread`
+  - result:
+    - no crash
+    - no task/manager event
+    - clean failure at the wrapper call:
+      - `Error: access violation accessing 0x0`
+  - interpretation:
+    - the richer batch wrapper still dereferences a null dependency when driven
+      from a fresh generic pair
+
+- `send-weixin-text-autonomous.py --mode fresh-batch0`
+  - same wrapper path, but aligned to the chatroom helper semantics:
+    - `+0xd8 = 10000`
+    - `FUN_1815e9960(sendCtx, resultBuf, vec, 0)`
+  - result:
+    - the call progressed deeper than `fresh-batch1`
+    - the Frida script was destroyed before final-state retrieval
+    - Windows event log confirms this crashed `Weixin.exe`
+      - `Application Error 1000`
+      - `Windows Error Reporting 1001`
+      - crash time: `2026-04-09 13:20:52`
+  - interpretation:
+    - `mode=0` plus `0xd8=10000` is closer to the internal chatroom helper path
+      than `fresh-batch1`
+    - but it is still not safe enough as an autonomous send primitive

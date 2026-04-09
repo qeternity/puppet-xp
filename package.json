@@ -20,6 +20,7 @@
     "build:agent": "tsc src/init-agent-script.ts --outFile src/init-agent-script.js",
     "capture:conversations": "python scripts/capture-weixin-conversations.py --pretty --output docs/weixin-4.1.8.29-live-conversations.json",
     "monitor:manager-events": "python scripts/monitor-weixin-manager-message-hook.py",
+    "monitor:send-task": "python scripts/monitor-weixin-send-task-hook.py",
     "frida": "tsc tests/frida.ts --outFile tests/frida.js && frida -n WeChat.exe -l tests/frida.js --debug",
     "build": "tsc && tsc -p tsconfig.cjs.json",
     "dist:commonjs": "jq -n \"{ type: \\\"commonjs\\\" }\" > dist/cjs/package.json",
