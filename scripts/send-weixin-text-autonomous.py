@@ -20,6 +20,8 @@ const TEMPLATE_OWNER = ptr({{TEMPLATE_OWNER_JSON}});
 const TARGET_CONVERSATION = {{TARGET_CONVERSATION_JSON}};
 const TARGET_BODY = {{TARGET_BODY_JSON}};
 const TARGET_THREAD_ID = {{TARGET_THREAD_ID}};
+const PAIR_MODE = {{PAIR_MODE}};
+const EBECO_FIX = {{EBECO_FIX_JSON}};
 
 function safePtrString(p) {
   try {
@@ -231,6 +233,9 @@ let freshHijackTriggered = false;
 let freshHijackCapture = null;
 let freshTraceActive = false;
 let freshTraceCounts = {};
+let freshPairBuildTrace = [];
+let freshPairBuildActive = false;
+let freshPairBuildCurrent = null;
 
 Interceptor.attach(mod.base.add(0x314950), {
   onEnter(args) {
@@ -274,6 +279,34 @@ Interceptor.attach(mod.base.add(0x154bb80), {
 Interceptor.attach(mod.base.add(0x15e8200), {
   onEnter(args) {
     try {
+      if (MODE === 'fresh-pair1' && Process.getCurrentThreadId() === TARGET_THREAD_ID) {
+        const pairPtr = args[2];
+        if (!pairPtr.isNull()) {
+          const sourcePtr = pairPtr.readPointer();
+          if (!sourcePtr.isNull()) {
+            const conversation = readStdString(sourcePtr.add(0xb0));
+            const body = readStdString(sourcePtr.add(0x660));
+            if (conversation === TARGET_CONVERSATION && body === TARGET_BODY) {
+              freshPairBuildActive = true;
+              freshPairBuildCurrent = {
+                kind: 'fresh_pair_build_enter',
+                thread_id: Process.getCurrentThreadId(),
+                caller_rva: safePtrString(this.returnAddress.sub(mod.base)),
+                send_ctx: safePtrString(args[0]),
+                result_buf: safePtrString(args[1]),
+                pair_ptr: safePtrString(pairPtr),
+                source_ptr: safePtrString(sourcePtr),
+                owner_ptr: safePtrString(pairPtr.add(Process.pointerSize).readPointer()),
+                mode: args[3].toUInt32(),
+                conversation,
+                body,
+              };
+              freshPairBuildTrace.push(freshPairBuildCurrent);
+              send(freshPairBuildCurrent);
+            }
+          }
+        }
+      }
       if (!freshHijackActive) return;
       if (Process.getCurrentThreadId() !== TARGET_THREAD_ID) return;
       const pairPtr = args[2];
@@ -313,8 +346,155 @@ Interceptor.attach(mod.base.add(0x15e8200), {
     } catch (e) {
       send({ kind: 'error', where: 'fresh_hijack_builder', error: String(e) });
     }
+  },
+  onLeave(retval) {
+    try {
+      if (!freshPairBuildActive || Process.getCurrentThreadId() !== TARGET_THREAD_ID) return;
+      const payload = {
+        kind: 'fresh_pair_build_leave',
+        thread_id: Process.getCurrentThreadId(),
+        retval: safePtrString(retval),
+      };
+      freshPairBuildTrace.push(payload);
+      send(payload);
+      freshPairBuildActive = false;
+      freshPairBuildCurrent = null;
+    } catch (e) {
+      send({ kind: 'error', where: 'fresh_pair_build_leave', error: String(e) });
+    }
   }
 });
+
+Interceptor.attach(mod.base.add(0x15eb320), {
+  onEnter(args) {
+    try {
+      if (!freshPairBuildActive || Process.getCurrentThreadId() !== TARGET_THREAD_ID) return;
+      const payload = {
+        kind: 'fresh_pair_eb320_enter',
+        thread_id: Process.getCurrentThreadId(),
+        p1: safePtrString(args[0]),
+        map_base: safePtrString(args[1]),
+        pair_copy: safePtrString(args[2]),
+        out_ptr: safePtrString(args[3]),
+      };
+      freshPairBuildTrace.push(payload);
+      send(payload);
+    } catch (e) {
+      send({ kind: 'error', where: 'fresh_pair_eb320_enter', error: String(e) });
+    }
+  },
+  onLeave(retval) {
+    try {
+      if (!freshPairBuildActive || Process.getCurrentThreadId() !== TARGET_THREAD_ID) return;
+      const payload = {
+        kind: 'fresh_pair_eb320_leave',
+        thread_id: Process.getCurrentThreadId(),
+        retval: safePtrString(retval),
+      };
+      freshPairBuildTrace.push(payload);
+      send(payload);
+    } catch (e) {
+      send({ kind: 'error', where: 'fresh_pair_eb320_leave', error: String(e) });
+    }
+  }
+});
+
+Interceptor.attach(mod.base.add(0x15ebec0), {
+  onEnter(args) {
+    try {
+      if (!freshPairBuildActive || Process.getCurrentThreadId() !== TARGET_THREAD_ID) return;
+      const keyPtr = args[1];
+      const payload = {
+        kind: 'fresh_pair_ebec0_enter',
+        thread_id: Process.getCurrentThreadId(),
+        builder: safePtrString(args[0]),
+        key_ptr: safePtrString(keyPtr),
+        key_s0: keyPtr.isNull() ? null : readStdString(keyPtr.add(0x0)),
+        key_s20: keyPtr.isNull() ? null : readStdString(keyPtr.add(0x20)),
+      };
+      if (EBECO_FIX && !keyPtr.isNull()) {
+        try {
+          const node = keyPtr.readPointer();
+          if (!node.isNull()) {
+            if (EBECO_FIX.q18) node.add(0x18).writePointer(ptr(EBECO_FIX.q18));
+            if (EBECO_FIX.q20) node.add(0x20).writePointer(ptr(EBECO_FIX.q20));
+            if (Object.prototype.hasOwnProperty.call(EBECO_FIX, 'q28')) {
+              node.add(0x28).writePointer(ptr(EBECO_FIX.q28));
+            }
+            if (Object.prototype.hasOwnProperty.call(EBECO_FIX, 'q30')) {
+              node.add(0x30).writePointer(ptr(EBECO_FIX.q30));
+            }
+            if (EBECO_FIX.q38) node.add(0x38).writePointer(ptr(EBECO_FIX.q38));
+            if (EBECO_FIX.q40) node.add(0x40).writePointer(ptr(EBECO_FIX.q40));
+            if (EBECO_FIX.q48) node.add(0x48).writePointer(ptr(EBECO_FIX.q48));
+            payload.fixed_node = {
+              node: safePtrString(node),
+              q18: EBECO_FIX.q18 || null,
+              q20: EBECO_FIX.q20 || null,
+              q28: Object.prototype.hasOwnProperty.call(EBECO_FIX, 'q28') ? EBECO_FIX.q28 : null,
+              q30: Object.prototype.hasOwnProperty.call(EBECO_FIX, 'q30') ? EBECO_FIX.q30 : null,
+              q38: EBECO_FIX.q38 || null,
+              q40: EBECO_FIX.q40 || null,
+              q48: EBECO_FIX.q48 || null,
+            };
+          }
+        } catch (fixErr) {
+          payload.fix_error = String(fixErr);
+        }
+      }
+      freshPairBuildTrace.push(payload);
+      send(payload);
+    } catch (e) {
+      send({ kind: 'error', where: 'fresh_pair_ebec0_enter', error: String(e) });
+    }
+  },
+  onLeave(retval) {
+    try {
+      if (!freshPairBuildActive || Process.getCurrentThreadId() !== TARGET_THREAD_ID) return;
+      const payload = {
+        kind: 'fresh_pair_ebec0_leave',
+        thread_id: Process.getCurrentThreadId(),
+        retval: safePtrString(retval),
+      };
+      freshPairBuildTrace.push(payload);
+      send(payload);
+    } catch (e) {
+      send({ kind: 'error', where: 'fresh_pair_ebec0_leave', error: String(e) });
+    }
+  }
+});
+
+function installFreshPairInnerTrace(rva, name) {
+  Interceptor.attach(mod.base.add(rva), {
+    onEnter(args) {
+      try {
+        if (!freshPairBuildActive || Process.getCurrentThreadId() !== TARGET_THREAD_ID) return;
+        const payload = {
+          kind: 'fresh_pair_inner',
+          name,
+          rva: '0x' + rva.toString(16),
+          thread_id: Process.getCurrentThreadId(),
+        };
+        freshPairBuildTrace.push(payload);
+        send(payload);
+      } catch (e) {
+        send({ kind: 'error', where: 'fresh_pair_inner_' + name, error: String(e) });
+      }
+    }
+  });
+}
+
+[
+  [0x01d1d40, 'mk_pair_copy'],
+  [0x1685ad0, 'emit_builder_record'],
+  [0x1636a20, 'link_builder_a'],
+  [0x1632f00, 'link_builder_b'],
+  [0x2102270, 'finalize_builder_branch'],
+  [0x3400c20, 'msg_kind_get'],
+  [0x3400c40, 'msg_flag_check'],
+  [0x3400c30, 'msg_flag_set'],
+  [0x3400c00, 'msg_aux_dump'],
+].forEach(([rva, name]) => installFreshPairInnerTrace(rva, name));
 
 function installFreshTraceHook(rva, name) {
   Interceptor.attach(mod.base.add(rva), {
@@ -483,6 +663,9 @@ rpc.exports.run = () => {
             const sendCtx = sendCtxBuf.readPointer();
 
             stage = 'fresh_pair_build';
+            freshPairBuildTrace = [];
+            freshPairBuildActive = false;
+            freshPairBuildCurrent = null;
             send({
               kind: 'stage',
               stage,
@@ -497,7 +680,7 @@ rpc.exports.run = () => {
             });
             const resultBuf = Memory.alloc(0x60);
             resultBuf.writeByteArray(new Uint8Array(0x60));
-            buildOnePairRequest(sendCtx, resultBuf, pairBuf, 1);
+            buildOnePairRequest(sendCtx, resultBuf, pairBuf, PAIR_MODE);
 
             stage = 'done';
             send({
@@ -515,6 +698,7 @@ rpc.exports.run = () => {
                 uuid: readStdString(sourceClone.add(0x600)),
                 body: readStdString(sourceClone.add(0x660)),
               },
+              build_trace: freshPairBuildTrace,
             });
           } catch (e) {
             send({ kind: 'invoke_error', stage, error: String(e), thread_id: TARGET_THREAD_ID, current_thread: Process.getCurrentThreadId(), mode: MODE });
@@ -752,6 +936,7 @@ rpc.exports.getstate = () => {
     self_username: selfUsername,
     fresh_hijack_capture: freshHijackCapture,
     fresh_trace_counts: freshTraceCounts,
+    fresh_pair_build_trace: freshPairBuildTrace,
     task_event: capturedTaskEvent,
     manager_event: capturedManagerEvent,
   };
@@ -858,6 +1043,8 @@ def main() -> None:
     parser.add_argument("--conversation-id", default="27208021116@chatroom")
     parser.add_argument("--body", default="skynet")
     parser.add_argument("--wait-ms", type=int, default=5000)
+    parser.add_argument("--pair-mode", type=int, default=1)
+    parser.add_argument("--ebec0-fix-json")
     args = parser.parse_args()
 
     window = find_weixin_main_window()
@@ -876,6 +1063,13 @@ def main() -> None:
         template_source = template_source or seed["sourceObj"]
         template_owner = template_owner or seed["ownerBase"]
 
+    ebec0_fix_json = None
+    if args.ebec0_fix_json:
+        try:
+            ebec0_fix_json = json.loads(args.ebec0_fix_json)
+        except json.JSONDecodeError:
+            ebec0_fix_json = ast.literal_eval(args.ebec0_fix_json)
+
     device = frida.get_local_device()
     session = device.attach(pid)
     rendered = (
@@ -887,6 +1081,8 @@ def main() -> None:
         .replace("{{TARGET_CONVERSATION_JSON}}", json.dumps(args.conversation_id))
         .replace("{{TARGET_BODY_JSON}}", json.dumps(args.body))
         .replace("{{TARGET_THREAD_ID}}", str(thread_id))
+        .replace("{{PAIR_MODE}}", str(args.pair_mode))
+        .replace("{{EBECO_FIX_JSON}}", json.dumps(ebec0_fix_json) if ebec0_fix_json is not None else "null")
     )
     script = session.create_script(rendered)
 
@@ -909,6 +1105,8 @@ def main() -> None:
         "seed": seed,
         "target_conversation": args.conversation_id,
         "target_body": args.body,
+        "pair_mode": args.pair_mode,
+        "ebec0_fix_json": ebec0_fix_json,
     }
     print(json.dumps({"kind": "host_meta", "meta": meta}, ensure_ascii=False))
     result = script.exports_sync.run()

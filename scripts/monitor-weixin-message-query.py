@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import argparse
 import sys
 import threading
 
@@ -116,11 +117,18 @@ setInterval(() => send({ kind: 'heartbeat' }), 30000);
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pid", type=int, help="Exact Weixin.exe PID to attach to")
+    args = parser.parse_args()
+
     device = frida.get_local_device()
-    matches = [p for p in device.enumerate_processes() if p.name.lower() == "weixin.exe"]
-    if not matches:
-        raise SystemExit("Weixin.exe not found")
-    pid = sorted(matches, key=lambda p: p.pid)[0].pid
+    if args.pid is not None:
+        pid = args.pid
+    else:
+        matches = [p for p in device.enumerate_processes() if p.name.lower() == "weixin.exe"]
+        if not matches:
+            raise SystemExit("Weixin.exe not found")
+        pid = sorted(matches, key=lambda p: p.pid)[0].pid
     session = device.attach(pid)
     script = session.create_script(SCRIPT)
 

@@ -4725,3 +4725,233 @@ New autonomous wrapper experiments:
     - `mode=0` plus `0xd8=10000` is closer to the internal chatroom helper path
       than `fresh-batch1`
     - but it is still not safe enough as an autonomous send primitive
+
+Fresh session `compare pin 2` builder/output diff:
+
+- passive probe:
+  - `probe-weixin-send-builder-inner.py`
+  - host session:
+    - PID `12516`
+    - main window thread `7924`
+- real ordinary send:
+  - body: `compare pin 2`
+  - worker thread: `9536`
+  - `FUN_1815e8200(..., mode=1)` path completes cleanly
+- known-good real builder sequence on thread `9536`:
+  - `build_enter`
+  - `eb320_enter`
+  - `mk_pair_copy`
+  - `emit_builder_record`
+  - `eb320_leave`
+  - `ebec0_enter`
+  - `msg_kind_get`
+  - `msg_kind_get`
+  - `link_builder_a`
+  - `msg_flag_set`
+  - `msg_flag_set`
+  - `msg_flag_check`
+  - `msg_flag_set`
+  - `link_builder_b`
+  - `msg_kind_get`
+  - `msg_kind_get`
+  - `msg_flag_check`
+  - `msg_flag_set`
+  - `msg_aux_dump`
+  - second `eb320_enter`
+  - `mk_pair_copy`
+  - `emit_builder_record`
+  - `eb320_leave`
+  - `ebec0_leave retval=0xf`
+  - `build_leave`
+
+Known-good first `ebec0` key node from the real send:
+
+- `key_strings.s0 = 27208021116@chatroom`
+- `key_node.qwords`:
+  - `0x18 = 0x2225e617300`
+  - `0x20 = 0x2225dbd87d0`
+  - `0x30 = 0x0`
+  - `0x38 = 0x2225e617340`
+  - `0x40 = 0x2225e1f4b80`
+  - `0x48 = 0x2225df23390`
+- builder state at `builder + 0xb78` matched across real/synthetic:
+  - `0x90 = 0x2225d047410`
+  - `0x98 = 0x2225d3611a0`
+  - `0xa0 = 0x2225d361190`
+  - `0xa8 = 0x7ffc917a21c8`
+  - `0xb0 = 0x2225d2e81f0`
+  - `0xb8 = 0x6b35575900000002`
+  - `0xc0 = 0x0`
+
+Autonomous `fresh-pair1` diff on the same session:
+
+- autonomous call:
+  - thread `9536`
+  - body `skynet`
+  - `FUN_1815e8200(..., mode=1)`
+- it now gets through:
+  - `fresh_pair_build_enter`
+  - `fresh_pair_eb320_enter`
+  - `mk_pair_copy`
+  - `emit_builder_record`
+  - `fresh_pair_eb320_leave`
+  - `fresh_pair_ebec0_enter`
+  - `msg_kind_get`
+  - `msg_kind_get`
+  - `link_builder_a`
+  - `msg_flag_set`
+  - `msg_flag_set`
+- then fails with:
+  - `invoke_error`
+  - `access violation accessing 0x0`
+- first autonomous `ebec0` key node on that same session differed sharply:
+  - `0x18 = 0x2225df23390`
+  - `0x20 = 0x2225df23380`
+  - `0x30 = ASCII-like garbage`
+  - `0x38 = ASCII-like garbage`
+  - `0x40 = 0x6e61`
+  - `0x48 = 0xf`
+- interpretation:
+  - the lower source pair is no longer the main mismatch
+  - the first `ebec0` key node is the strongest remaining divergence
+  - the autonomous path likely needs a real-session repair of that node before
+    `msg_flag_check` / `link_builder_b`
+
+Autonomous repair support:
+
+- `send-weixin-text-autonomous.py` now supports:
+  - `--ebec0-fix-json`
+- this patches the first `ebec0` node during `fresh_pair_ebec0_enter`:
+  - optional `q18`
+  - optional `q20`
+  - forced `q30 = 0`
+  - optional `q38`
+  - optional `q40`
+  - optional `q48`
+- first session-specific repair candidate captured from the real `compare pin 2`
+  send:
+  - `{"q18":"0x2225e617300","q20":"0x2225dbd87d0","q38":"0x2225e617340","q40":"0x2225e1f4b80","q48":"0x2225df23390"}`
+- the first attempted rerun with this fix did not execute because `Weixin.exe`
+  PID `12516` had already exited before Frida attached
+
+Fresh session `compare pin 3` update:
+
+- fresh main UI session:
+  - `Weixin.exe` PID `6052`
+  - main window thread `10308`
+- real comparison send:
+  - body `compare pin 3`
+  - live send worker thread `1020`
+- first real `ebec0` key node for this session:
+  - `q18 = 0x1cc88b6c9e0`
+  - `q20 = 0x1cc88b6c9d0`
+  - `q30 = 0x1cc87faf1a0`
+  - `q38 = 0x1cc87faf1a0`
+  - `q40 = 0x6d6f632e7171`
+  - `q48 = 0x804ed6a700000001`
+- this session is important because unlike the earlier `compare pin 2` session,
+  the real first key node has `q30 == q38`; forcing `q30 = 0` was wrong here
+
+Autonomous `fresh-pair1` repair progress on the `compare pin 3` session:
+
+- first repaired rerun using only:
+  - `q18`
+  - `q20`
+  - `q38`
+  - `q40`
+  - `q48`
+  still failed, but the reason became clearer:
+  - the autonomous path reached the same old boundary
+  - and the script-level repair log proved we were still forcing `q30 = 0`
+
+- `send-weixin-text-autonomous.py` was then patched so `--ebec0-fix-json`
+  can optionally set a real session-specific `q30` instead of always zeroing it
+
+- second repaired rerun using the full first-node shape:
+  - `q18 = 0x1cc88b6c9e0`
+  - `q20 = 0x1cc88b6c9d0`
+  - `q30 = 0x1cc87faf1a0`
+  - `q38 = 0x1cc87faf1a0`
+  - `q40 = 0x6d6f632e7171`
+  - `q48 = 0x804ed6a700000001`
+  produced the farthest autonomous `fresh-pair1` result so far:
+  - `fresh_pair_build_enter`
+  - `fresh_pair_eb320_enter`
+  - `mk_pair_copy`
+  - `fresh_pair_eb320_leave`
+  - `fresh_pair_ebec0_enter`
+  - `msg_kind_get`
+  - `msg_kind_get`
+  - `fresh_pair_ebec0_leave retval=0xf`
+- that is a real milestone because previous `fresh-pair1` runs died before
+  `fresh_pair_ebec0_leave`
+
+Current remaining blocker after that repaired run:
+
+- even with the full first-node repair, the autonomous script still ended with:
+  - `final_state_error`
+  - `script has been destroyed`
+- there was still no internal:
+  - `task_event`
+  - `manager_event`
+- the next planned check was to verify the same repaired autonomous run against
+  external proof hooks:
+  - `monitor-weixin-send-task-hook.py`
+  - `monitor-weixin-manager-message-hook.py`
+- but before that rerun could attach, `Weixin.exe` PID `6052` disappeared and
+  Frida returned:
+  - `ProcessNotFoundError: unable to find process with pid 6052`
+
+Fresh session `compare pin 4` autonomous delivery check:
+
+- fresh main UI session:
+  - `Weixin.exe` PID `11644`
+  - main window thread `11772`
+- real comparison send:
+  - body `compare pin 4`
+  - worker thread `11236`
+- first real `ebec0` node on this session differed from the previous session:
+  - `q18 = 0x790074`
+  - `q20 = 0x9fb945f33d7d7710`
+  - `q30 = 0x7ffc914fdfa8`
+  - `q38 = 0x0`
+  - `q40 = 0x7ffc932af360`
+  - `q48 = 0x20d860f6178`
+
+Autonomous `fresh-pair1` replay on the `compare pin 4` session:
+
+- used:
+  - thread `11236`
+  - `mode=1`
+  - session-local `ebec0` repair values above
+- result:
+  - still failed before `msg_flag_check`
+  - no internal `task_event`
+  - no internal `manager_event`
+
+External proof hooks on the same real main UI process:
+
+- `monitor-weixin-send-task-hook.py --pid 11644`
+- `monitor-weixin-manager-message-hook.py --pid 11644`
+
+Observed outcome:
+
+- scheduler/send-task hook **did** record a native outgoing task for:
+  - conversation `27208021116@chatroom`
+  - content `skynet`
+- manager-dispatch hook **did not** record a corresponding compact send-success
+  event for `skynet`
+- user then visually verified in the real WeChat UI that:
+  - `skynet` appears in `Zuma Internal`
+  - but it has the red `!` failed-send indicator / `resend message`
+
+Current interpretation:
+
+- the repaired autonomous path can now create a real local outgoing message row
+  and scheduled send task
+- but it still does **not** complete the downstream delivery/send-success path
+- this is stronger than earlier purely local builder progress:
+  - the message is now present in the conversation UI
+  - however it is still failing before the final delivery/ack leg
+- therefore the remaining blocker is no longer “can we create a local message?”
+  but “what extra state is required for a valid successful send?”
