@@ -463,6 +463,15 @@ Interceptor.attach(mod.base.add(0x15af8e0), {
       mark('clone_source_fix_backrefs');
       sourceClone.add(0x8).writePointer(sourceClone);
       sourceClone.add(0x10).writePointer(ownerClone);
+      send({
+        kind: 'synthetic_clone_ready',
+        thread_id: Process.getCurrentThreadId(),
+        owner_clone: safePtrString(ownerClone),
+        source_clone: safePtrString(sourceClone),
+        original_owner: safePtrString(this.pending.ownerBase),
+        original_source: safePtrString(this.pending.sourceObj),
+        trigger_body: this.pending.body,
+      });
 
       mark('rewrite_strings_conversation');
       writeHeapStdString(sourceClone.add(0xb0), TARGET_CONVERSATION, wxAlloc);

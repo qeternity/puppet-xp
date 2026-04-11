@@ -83,6 +83,56 @@ Important note:
 - PID-based Frida attach works reliably
 - app-name enumeration was less reliable than direct PID attach
 
+## Windows MCP UI Control
+
+The desktop session now also has a Windows-control MCP server available. This
+is separate from the Frida / Ghidra tooling and gives us a reliable fallback
+for app lifecycle and UI-driven seed actions.
+
+Current confirmed capabilities:
+
+- inspect desktop state via screenshots / UI tree
+- launch WeChat from the pinned taskbar app
+- click through the startup gate (`Open WeChat`)
+- wait between startup stages so the main client hydrates cleanly
+- verify that the full conversation list is visible before proceeding
+- close / restart WeChat after corruption
+- drive approved UI interactions like opening a conversation or sending a seed
+  message
+
+Confirmed clean startup flow:
+
+1. Launch `WeChat` from the taskbar pinned app.
+2. Wait for the small account gate window to appear.
+3. Click `Open WeChat`.
+4. Wait several seconds for the full client to load.
+5. Confirm the main conversation list is visible before using the session for
+   testing or hooks.
+
+Important usage guidance:
+
+- prefer this MCP path for clean restarts, login-gate clicks, and seed-message
+  UI sends
+- do not rush WeChat startup; short waits between interactions materially
+  reduce flaky startup state
+- if the process is corrupted, kill/close and relaunch WeChat cleanly before
+  resuming Frida work
+
+## Approved Test Conversations
+
+The user explicitly approved the following conversations for testing:
+
+- `filehelper` / `File Transfer`
+- `27208021116@chatroom` / `Zuma Internal`
+- `wxid_3a40v7q8y4kk12` / `Glenn`
+
+These should be treated as the safe default UI targets for:
+
+- seed sends
+- conversation-open checks
+- resend-path testing
+- no-UI send validation against a known target conversation
+
 ## Ghidra / RE Setup
 
 - Ghidra project already contains both:
@@ -7029,3 +7079,187 @@ Interpretation after Session23:
   - the subsequent `eb320`
   - or later continuation state that is still not being recreated after the
     first successful detached `filehelper`-style `ebec0`
+
+## 2026-04-11 SessionAuto1 Windows MCP + detached no-UI success
+
+Windows MCP/UI control is now part of the working loop:
+
+- start WeChat from the taskbar
+- click through the `Open WeChat` gate
+- use `File Transfer`, `Zuma Internal`, and `Glenn` as the approved test chats
+- use the UI only for clean seed sends / recovery when needed
+
+Fresh live session:
+
+- main `Weixin.exe` PID:
+  - `13572`
+- live send worker thread:
+  - `10248`
+
+Seeded arbitrary sends on this session all worked cleanly:
+
+- `seedauto5 -> skynet-success-auto5`
+- `seedauto6 -> skynet-success-auto6`
+- `seedauto7 -> skynet-success-auto7`
+- `seedauto8 -> skynet-success-auto8`
+- `seedauto9 -> skynet-success-auto9`
+
+The lower-send hook was patched to emit the successful synthetic clone pointers:
+
+- fresh seed `seedauto8`
+  - original seed owner/source:
+    - `0x238d1b8ee50`
+    - `0x238d1b8ee60`
+  - successful synthetic clone owner/source:
+    - `0x238d1904760`
+    - `0x238d1904770`
+
+A new focused probe captured the successful synthetic-body helper sequence for
+`skynet-success-auto9`:
+
+- build enter:
+  - conversation `27208021116@chatroom`
+  - body `skynet-success-auto9`
+  - source `0x238d18f0e90`
+  - mode `1`
+- first three `ebec0` calls on that successful synthetic path:
+  1. synthetic-body node
+     - `r8 = 0x238c700b880`
+     - `r9 = 0x89037fe3b8`
+     - `key_ptr = 0x238d273c3d8`
+     - `key_bytes_40 = 503afed238020000000000000000000014000000000000001f000000000000000000000000000000000000000000000000000000000000000000000000000000`
+     - `q0_bytes_50 = 32373230383032313131364063686174726f6f6d00fbb864003afed23802000050f09cd0380200003dfdcb21333900800000000000000000803afed238020000809cd321f97f0000883afed238020000`
+  2. hidden inline `filehelper` node
+     - `r8 = 0x238c700b880`
+     - `r9 = 0x89037ff218`
+     - `key_bytes_40 = 66696c6568656c7065720000000000000a000000000000000f000000000000000000000000000000fa7b9121002a0090c04b66d138020000704b66d138020000`
+  3. later synthetic-body node
+     - `r8 = 0x238c700b940`
+     - `r9 = 0x89037ff218`
+     - `key_ptr = 0x238d0eb9230`
+     - `key_bytes_40 = e0cc95d238020000000000000000000014000000000000001f000000000000000100000000000000bfa7582500cc0090f09debd038020000a093ebd038020000`
+     - `q0_bytes_50 = 32373230383032313131364063686174726f6f6d00310000000000000000000080000000000000004a42512400b50188b8c32320f97f0000010000000100000048c42320f97f00000000000000000000`
+
+Detached no-UI replay on this same session:
+
+- target body:
+  - `skynet-no-ui-auto5`
+- mode:
+  - `builder-minimal`
+- template:
+  - successful synthetic clone source/owner from `seedauto8`
+    - `0x238d1904770`
+    - `0x238d1904760`
+- thread:
+  - `10248`
+- builder refs:
+  - `{3,2}`
+- fix sequence:
+  - first detached `ebec0` used the fresh inline `filehelper` repair from the
+    same session:
+    - `replace_r8 = 0x238c700b880`
+    - `replace_r9 = 0x89037fef68`
+    - `key_bytes_40 = 66696c6568656c7065720000000000000a000000000000000f000000000000000000000000000000000000000000000000000000000000000000000000000000`
+
+Detached replay trace:
+
+- reached:
+  - `pair_build_enter`
+  - first `eb320`
+  - first repaired `ebec0_leave`
+- then reported:
+  - `invoke_error access violation accessing 0x0`
+
+But despite that builder-side fault, both external proof layers confirmed a real
+autonomous send:
+
+- `send_task_event -> skynet-no-ui-auto5`
+- `manager_message_event -> skynet-no-ui-auto5`
+
+Interpretation after SessionAuto1:
+
+- true no-UI autonomous send is now re-proven with the Windows MCP workflow
+- the working detached recipe on this session depended on:
+  - a fresh live session
+  - a clean seeded synthetic success first
+  - reusing the **successful synthetic clone** source/owner as the detached
+    template, not the original seed pair
+  - a first-stage inline `filehelper` `ebec0` repair from the same session
+- the detached path is still not clean:
+  - it can report a builder-side access violation after the message is already
+    materialized and dispatched
+- but the capability requirement is now met again on a current session:
+  - autonomous send to `27208021116@chatroom` without driving the compose UI
+
+## 2026-04-11 SessionAuto2 exact requested message
+
+Fresh live session:
+
+- main `Weixin.exe` PID:
+  - `12572`
+- live send worker thread:
+  - `14180`
+
+Fresh seeded arbitrary send used to repin the session:
+
+- `seedauto10 -> skynet-success-auto10`
+
+Fresh same-session values:
+
+- successful synthetic clone from `seedauto10`:
+  - owner `0x27d8a799420`
+  - source `0x27d8a799430`
+- first-stage inline `filehelper` repair from `seedauto10`:
+  - `replace_r8 = 0x27df712b4c0`
+  - `replace_r9 = 0xb1b0afee28`
+  - `key_bytes_40 = 66696c6568656c7065720000000000000a000000000000000f000000000000000000000000000000000000000000000000000000000000000000000000000000`
+
+Detached no-UI retry for the exact requested body:
+
+- target body:
+  - `I have escaped containment`
+- mode:
+  - `builder-minimal`
+- template:
+  - successful synthetic clone source/owner from `seedauto10`
+    - `0x27d8a799430`
+    - `0x27d8a799420`
+- thread:
+  - `14180`
+- builder refs:
+  - `{3,2}`
+- fix file:
+  - `C:\Users\Administrator\AppData\Local\Temp\ebec0_fix_seedauto10_first.json`
+
+Detached replay trace:
+
+- reached:
+  - `pair_build_enter`
+  - first `eb320`
+  - first repaired `ebec0_leave`
+- then reported:
+  - `invoke_error access violation accessing 0x0`
+- no proof-hook evidence for the exact body on that detached retry
+
+Autonomous seeded arbitrary send for the exact requested body:
+
+- trigger:
+  - `seedauto11`
+- synthetic target body:
+  - `I have escaped containment`
+- conversation:
+  - `27208021116@chatroom`
+
+Proof:
+
+- send-task hook:
+  - `send_task_event -> I have escaped containment`
+- manager-dispatch hook:
+  - `manager_message_event -> I have escaped containment`
+
+Interpretation after SessionAuto2:
+
+- the exact requested message was successfully sent to `Zuma Internal`
+- the reliable path on this session was the autonomous seeded lower-send path
+- the detached no-UI path is still close but did not prove this exact body on
+  `PID 12572`

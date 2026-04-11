@@ -247,6 +247,11 @@ const buildOnePairRequest = new NativeFunction(mod.base.add(0x15e8200), 'pointer
 const buildBatchRequest = new NativeFunction(mod.base.add(0x15e9960), 'pointer', ['pointer', 'pointer', 'pointer', 'ulong']);
 const topSendFn = new NativeFunction(mod.base.add(0x15af8e0), 'void', ['pointer']);
 const freshSendCtor = new NativeFunction(mod.base.add(0x1664250), 'void', ['pointer', 'pointer', 'pointer']);
+const initTask = new NativeFunction(mod.base.add(0x0f7b40), 'void', ['pointer', 'pointer', 'pointer']);
+const copyMeta = new NativeFunction(mod.base.add(0x38880), 'pointer', ['pointer', 'pointer']);
+const copyTaskPayload = new NativeFunction(mod.base.add(0x15affc0), 'pointer', ['pointer', 'pointer']);
+const initScheduleCtx = new NativeFunction(mod.base.add(0x182c10), 'void', ['pointer', 'pointer', 'pointer', 'uint']);
+const scheduleTask = new NativeFunction(mod.base.add(0x314950), 'uint', ['pointer', 'pointer', 'pointer', 'uchar']);
 
 let capturedTaskEvent = null;
 let capturedManagerEvent = null;
@@ -518,6 +523,7 @@ Interceptor.attach(mod.base.add(0x15ebec0), {
             args[3] = ptr(ebec0Fix.replace_r9);
             payload.replaced_r9 = ebec0Fix.replace_r9;
           }
+          let q0Hex = null;
           if (ebec0Fix.key_bytes_40 || ebec0Fix.q0_bytes_50 || ebec0Fix.q0_bytes_hex) {
             const keyClone = Memory.alloc(0x40);
             keyClone.writeByteArray(new Uint8Array(0x40));
@@ -529,7 +535,7 @@ Interceptor.attach(mod.base.add(0x15ebec0), {
               keyClone.writeByteArray(keyBytes);
             }
             let q0Clone = NULL;
-            const q0Hex = ebec0Fix.q0_bytes_hex || ebec0Fix.q0_bytes_50 || null;
+            q0Hex = ebec0Fix.q0_bytes_hex || ebec0Fix.q0_bytes_50 || null;
             if (q0Hex) {
               const q0Bytes = hexToByteArray(q0Hex);
               if (!q0Bytes || q0Bytes.length === 0) {
@@ -546,8 +552,9 @@ Interceptor.attach(mod.base.add(0x15ebec0), {
           const effectiveKeyPtr = args[1];
           payload.effective_key_ptr = safePtrString(effectiveKeyPtr);
           payload.effective_key_qwords = readQwords(effectiveKeyPtr, 8);
-          const node = effectiveKeyPtr.readPointer();
-          if (!node.isNull()) {
+          if (q0Hex) {
+            const node = effectiveKeyPtr.readPointer();
+            if (!node.isNull()) {
             if (ebec0Fix.q18) node.add(0x18).writePointer(ptr(ebec0Fix.q18));
             if (ebec0Fix.q20) node.add(0x20).writePointer(ptr(ebec0Fix.q20));
             if (Object.prototype.hasOwnProperty.call(ebec0Fix, 'q28')) {
@@ -569,6 +576,7 @@ Interceptor.attach(mod.base.add(0x15ebec0), {
               q40: ebec0Fix.q40 || null,
               q48: ebec0Fix.q48 || null,
             };
+          }
           }
         } catch (fixErr) {
           payload.fix_error = String(fixErr);
@@ -1200,7 +1208,66 @@ rpc.exports.run = () => {
       freshPairBuildActive = false;
       freshPairBuildCurrent = null;
       freshPairEbec0Index = 0;
-      buildOnePairRequest(sendCtx, resultBuf, pairBuf, 1);
+      buildOnePairRequest(sendCtx, resultBuf, pairBuf, PAIR_MODE);
+
+      if (MODE === 'tail-schedule') {
+        stage = 'alloc_task';
+        send({ kind: 'stage', stage });
+        const taskObj = wxAlloc(0x158);
+        taskObj.writeByteArray(new Uint8Array(0x158));
+
+        stage = 'init_task_call';
+        send({ kind: 'stage', stage });
+        initTask(taskObj, mod.base.add(0x15afcd0), mod.base.add(0x15afe50));
+
+        stage = 'copy_meta_prepare';
+        send({ kind: 'stage', stage });
+        const emptyMeta = Memory.alloc(0xd0);
+        emptyMeta.writeByteArray(new Uint8Array(0xd0));
+
+        stage = 'copy_meta_call';
+        send({ kind: 'stage', stage });
+        copyMeta(taskObj.add(0x28), emptyMeta);
+
+        stage = 'copy_payload_call';
+        send({ kind: 'stage', stage });
+        copyTaskPayload(taskObj.add(0x110), resultBuf);
+
+        stage = 'init_sched_ctx_alloc';
+        send({ kind: 'stage', stage });
+        const schedCtx = Memory.alloc(0x20);
+        schedCtx.writeByteArray(new Uint8Array(0x20));
+
+        stage = 'init_sched_ctx_call';
+        send({ kind: 'stage', stage });
+        initScheduleCtx(schedCtx, mod.base.add(0x7dc727f), mod.base.add(0x81207c4), 0x1f9);
+
+        stage = 'schedule_holder_alloc';
+        send({ kind: 'stage', stage });
+        const holder = Memory.alloc(Process.pointerSize);
+        holder.writePointer(taskObj);
+
+        stage = 'schedule_call';
+        send({ kind: 'stage', stage });
+        const scheduleResult = scheduleTask(schedCtx, holder, ptr('0x0'), 0);
+
+        stage = 'done';
+        send({
+          kind: 'autonomous_send_invoked',
+          mode: MODE,
+          stage,
+          thread_id: TARGET_THREAD_ID,
+          source_offset: sourceOffset,
+          schedule_result: scheduleResult,
+          task_obj: safePtrString(taskObj),
+          rewritten: {
+            conversation: readStdString(sourceClone.add(0xb0)),
+            uuid: readStdString(sourceClone.add(0x600)),
+            body: readStdString(sourceClone.add(0x660)),
+          },
+        });
+        return;
+      }
 
       stage = 'done';
       send({
@@ -1326,7 +1393,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pid", type=int)
     parser.add_argument("--thread-id", type=int)
-    parser.add_argument("--mode", choices=["builder", "builder-minimal", "wrapper", "wrapper-inplace", "wrapper-inplace-no-restore", "fresh", "fresh-hijack1", "fresh-trace", "fresh-pair1", "fresh-batch1", "fresh-batch0", "batch-template"], default="fresh")
+    parser.add_argument("--mode", choices=["builder", "builder-minimal", "tail-schedule", "wrapper", "wrapper-inplace", "wrapper-inplace-no-restore", "fresh", "fresh-hijack1", "fresh-trace", "fresh-pair1", "fresh-batch1", "fresh-batch0", "batch-template"], default="fresh")
     parser.add_argument("--template-wrapper")
     parser.add_argument("--template-source")
     parser.add_argument("--template-owner")
@@ -1336,6 +1403,7 @@ def main() -> None:
     parser.add_argument("--wait-ms", type=int, default=5000)
     parser.add_argument("--pair-mode", type=int, default=1)
     parser.add_argument("--ebec0-fix-json")
+    parser.add_argument("--ebec0-fix-file")
     parser.add_argument("--owner-ref-a", type=int)
     parser.add_argument("--owner-ref-b", type=int)
     args = parser.parse_args()
@@ -1357,11 +1425,17 @@ def main() -> None:
         template_owner = template_owner or seed["ownerBase"]
 
     ebec0_fix_json = None
-    if args.ebec0_fix_json:
+    ebec0_fix_source = None
+    if args.ebec0_fix_file:
+        ebec0_fix_source = Path(args.ebec0_fix_file).read_text(encoding="utf-8")
+    elif args.ebec0_fix_json:
+        ebec0_fix_source = args.ebec0_fix_json
+
+    if ebec0_fix_source:
         try:
-            ebec0_fix_json = json.loads(args.ebec0_fix_json)
+            ebec0_fix_json = json.loads(ebec0_fix_source)
         except json.JSONDecodeError:
-            ebec0_fix_json = ast.literal_eval(args.ebec0_fix_json)
+            ebec0_fix_json = ast.literal_eval(ebec0_fix_source)
 
     device = frida.get_local_device()
     session = device.attach(pid)
