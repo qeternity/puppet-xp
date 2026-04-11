@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import argparse
 import ctypes
 import json
 import sys
@@ -58,6 +59,17 @@ function dumpQwords(base, offs) {
     out['0x' + off.toString(16)] = readU64(base, off);
   });
   return out;
+}
+
+function dumpBytesHex(base, size) {
+  try {
+    if (!base || base.isNull()) return null;
+    const bytes = base.readByteArray(size);
+    if (!bytes) return null;
+    return Array.from(new Uint8Array(bytes)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  } catch (_) {
+    return null;
+  }
 }
 
 let seq = 0;
@@ -176,6 +188,8 @@ Interceptor.attach(mod.base.add(0x15ebec0), {
         kind: 'ebec0_enter',
         thread_id: Process.getCurrentThreadId(),
         builder: safe(args[0]),
+        r8: safe(args[2]),
+        r9: safe(args[3]),
         key_ptr: safe(keyPtr),
         key_qwords: {
           q0: readU64(keyPtr, 0x0),
@@ -190,6 +204,8 @@ Interceptor.attach(mod.base.add(0x15ebec0), {
         key_node: q0.isNull() ? null : {
           ptr: safe(q0),
           qwords: dumpQwords(q0, [0x0, 0x8, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38, 0x40, 0x48]),
+          bytes_80: dumpBytesHex(q0, 0x80),
+          bytes_100: dumpBytesHex(q0, 0x100),
           s10: dumpStd(q0, 0x10),
           s30: dumpStd(q0, 0x30),
         },
@@ -252,9 +268,14 @@ def find_weixin_main_window():
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pid", type=int)
+    args = parser.parse_args()
+
     window = find_weixin_main_window()
+    target_pid = args.pid or window["pid"]
     device = frida.get_local_device()
-    session = device.attach(window["pid"])
+    session = device.attach(target_pid)
     script = session.create_script(SCRIPT)
 
     def on_message(message, data):
@@ -264,7 +285,7 @@ def main() -> None:
 
     script.on("message", on_message)
     script.load()
-    print(json.dumps({"kind": "host_meta", "pid": window["pid"], "thread_id": window["thread_id"], "title": window["title"]}, ensure_ascii=False), flush=True)
+    print(json.dumps({"kind": "host_meta", "pid": target_pid, "thread_id": window["thread_id"], "title": window["title"]}, ensure_ascii=False), flush=True)
     try:
         while True:
             time.sleep(1)

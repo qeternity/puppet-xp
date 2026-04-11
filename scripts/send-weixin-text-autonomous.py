@@ -22,6 +22,8 @@ const TARGET_BODY = {{TARGET_BODY_JSON}};
 const TARGET_THREAD_ID = {{TARGET_THREAD_ID}};
 const PAIR_MODE = {{PAIR_MODE}};
 const EBECO_FIX = {{EBECO_FIX_JSON}};
+const OWNER_REF_A_OVERRIDE = {{OWNER_REF_A_JSON}};
+const OWNER_REF_B_OVERRIDE = {{OWNER_REF_B_JSON}};
 
 function safePtrString(p) {
   try {
@@ -95,6 +97,28 @@ function randomUuid() {
     '8' + randomHex(3),
     randomHex(12),
   ].join('-');
+}
+
+function hexToByteArray(hex) {
+  if (!hex) return null;
+  const clean = hex.replace(/[^0-9a-fA-F]/g, '');
+  if (clean.length === 0 || (clean.length % 2) !== 0) return null;
+  const out = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < clean.length; i += 2) {
+    out[i / 2] = parseInt(clean.slice(i, i + 2), 16);
+  }
+  return out;
+}
+
+function readBytesHex(addr, size) {
+  try {
+    if (!addr || addr.isNull()) return null;
+    const bytes = addr.readByteArray(size);
+    if (!bytes) return null;
+    return Array.from(new Uint8Array(bytes)).map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch (e) {
+    return null;
+  }
 }
 
 function isConversationId(s) {
@@ -236,6 +260,64 @@ let freshTraceCounts = {};
 let freshPairBuildTrace = [];
 let freshPairBuildActive = false;
 let freshPairBuildCurrent = null;
+let freshPairEbec0Index = 0;
+
+function readQwords(base, count) {
+  try {
+    if (!base || base.isNull()) return null;
+    const out = {};
+    for (let i = 0; i < count; i++) {
+      const off = i * Process.pointerSize;
+      out['0x' + off.toString(16)] = safePtrString(base.add(off).readPointer());
+    }
+    return out;
+  } catch (e) {
+    return null;
+  }
+}
+
+function getEbec0FixForIndex(index) {
+  if (!EBECO_FIX) return null;
+  if (Array.isArray(EBECO_FIX)) {
+    return index < EBECO_FIX.length ? EBECO_FIX[index] : null;
+  }
+  if (Array.isArray(EBECO_FIX.sequence)) {
+    return index < EBECO_FIX.sequence.length ? EBECO_FIX.sequence[index] : null;
+  }
+  return EBECO_FIX;
+}
+
+Process.setExceptionHandler(function (details) {
+  try {
+    if (!freshPairBuildActive) return false;
+    const currentThread = Process.getCurrentThreadId();
+    if (currentThread !== TARGET_THREAD_ID) return false;
+    const ctx = details.context || {};
+    send({
+      kind: 'fresh_pair_exception',
+      thread_id: currentThread,
+      type: details.type || null,
+      address: details.address ? safePtrString(details.address) : null,
+      memory_operation: details.memory ? details.memory.operation : null,
+      memory_address: details.memory ? safePtrString(details.memory.address) : null,
+      stage_call: freshPairBuildCurrent,
+      registers: {
+        rip: ctx.rip ? safePtrString(ctx.rip) : null,
+        rsp: ctx.rsp ? safePtrString(ctx.rsp) : null,
+        rbp: ctx.rbp ? safePtrString(ctx.rbp) : null,
+        rcx: ctx.rcx ? safePtrString(ctx.rcx) : null,
+        rdx: ctx.rdx ? safePtrString(ctx.rdx) : null,
+        r8: ctx.r8 ? safePtrString(ctx.r8) : null,
+        r9: ctx.r9 ? safePtrString(ctx.r9) : null,
+        rax: ctx.rax ? safePtrString(ctx.rax) : null,
+      },
+      rsp_qwords: ctx.rsp ? readQwords(ctx.rsp, 8) : null,
+    });
+  } catch (e) {
+    send({ kind: 'error', where: 'fresh_pair_exception_handler', error: String(e) });
+  }
+  return false;
+});
 
 Interceptor.attach(mod.base.add(0x314950), {
   onEnter(args) {
@@ -279,7 +361,7 @@ Interceptor.attach(mod.base.add(0x154bb80), {
 Interceptor.attach(mod.base.add(0x15e8200), {
   onEnter(args) {
     try {
-      if (MODE === 'fresh-pair1' && Process.getCurrentThreadId() === TARGET_THREAD_ID) {
+      if (Process.getCurrentThreadId() === TARGET_THREAD_ID) {
         const pairPtr = args[2];
         if (!pairPtr.isNull()) {
           const sourcePtr = pairPtr.readPointer();
@@ -287,21 +369,28 @@ Interceptor.attach(mod.base.add(0x15e8200), {
             const conversation = readStdString(sourcePtr.add(0xb0));
             const body = readStdString(sourcePtr.add(0x660));
             if (conversation === TARGET_CONVERSATION && body === TARGET_BODY) {
+              const ownerPtr = pairPtr.add(Process.pointerSize).readPointer();
               freshPairBuildActive = true;
               freshPairBuildCurrent = {
-                kind: 'fresh_pair_build_enter',
+                kind: 'pair_build_enter',
                 thread_id: Process.getCurrentThreadId(),
                 caller_rva: safePtrString(this.returnAddress.sub(mod.base)),
                 send_ctx: safePtrString(args[0]),
                 result_buf: safePtrString(args[1]),
                 pair_ptr: safePtrString(pairPtr),
                 source_ptr: safePtrString(sourcePtr),
-                owner_ptr: safePtrString(pairPtr.add(Process.pointerSize).readPointer()),
+                owner_ptr: safePtrString(ownerPtr),
                 mode: args[3].toUInt32(),
                 conversation,
                 body,
+                script_mode: MODE,
+                owner_refs: ownerPtr.isNull() ? null : {
+                  ref_a: readU32(ownerPtr, 0x8),
+                  ref_b: readU32(ownerPtr, 0xc),
+                },
               };
               freshPairBuildTrace.push(freshPairBuildCurrent);
+              freshPairEbec0Index = 0;
               send(freshPairBuildCurrent);
             }
           }
@@ -404,38 +493,81 @@ Interceptor.attach(mod.base.add(0x15ebec0), {
     try {
       if (!freshPairBuildActive || Process.getCurrentThreadId() !== TARGET_THREAD_ID) return;
       const keyPtr = args[1];
+      const ebec0Index = freshPairEbec0Index++;
       const payload = {
         kind: 'fresh_pair_ebec0_enter',
+        index: ebec0Index,
         thread_id: Process.getCurrentThreadId(),
         builder: safePtrString(args[0]),
         key_ptr: safePtrString(keyPtr),
         key_s0: keyPtr.isNull() ? null : readStdString(keyPtr.add(0x0)),
         key_s20: keyPtr.isNull() ? null : readStdString(keyPtr.add(0x20)),
       };
-      if (EBECO_FIX && !keyPtr.isNull()) {
+      const ebec0Fix = getEbec0FixForIndex(ebec0Index);
+      if (ebec0Fix && !keyPtr.isNull()) {
         try {
-          const node = keyPtr.readPointer();
+          if (ebec0Fix.replace_key_ptr) {
+            args[1] = ptr(ebec0Fix.replace_key_ptr);
+            payload.replaced_key_ptr = ebec0Fix.replace_key_ptr;
+          }
+          if (ebec0Fix.replace_r8) {
+            args[2] = ptr(ebec0Fix.replace_r8);
+            payload.replaced_r8 = ebec0Fix.replace_r8;
+          }
+          if (ebec0Fix.replace_r9) {
+            args[3] = ptr(ebec0Fix.replace_r9);
+            payload.replaced_r9 = ebec0Fix.replace_r9;
+          }
+          if (ebec0Fix.key_bytes_40 || ebec0Fix.q0_bytes_50 || ebec0Fix.q0_bytes_hex) {
+            const keyClone = Memory.alloc(0x40);
+            keyClone.writeByteArray(new Uint8Array(0x40));
+            if (ebec0Fix.key_bytes_40) {
+              const keyBytes = hexToByteArray(ebec0Fix.key_bytes_40);
+              if (!keyBytes || keyBytes.length !== 0x40) {
+                throw new Error('key_bytes_40 must decode to 0x40 bytes');
+              }
+              keyClone.writeByteArray(keyBytes);
+            }
+            let q0Clone = NULL;
+            const q0Hex = ebec0Fix.q0_bytes_hex || ebec0Fix.q0_bytes_50 || null;
+            if (q0Hex) {
+              const q0Bytes = hexToByteArray(q0Hex);
+              if (!q0Bytes || q0Bytes.length === 0) {
+                throw new Error('q0_bytes_hex must decode to non-empty bytes');
+              }
+              q0Clone = Memory.alloc(q0Bytes.length);
+              q0Clone.writeByteArray(q0Bytes);
+              keyClone.writePointer(q0Clone);
+            }
+            args[1] = keyClone;
+            payload.allocated_key_clone = safePtrString(keyClone);
+            payload.allocated_q0_clone = safePtrString(q0Clone);
+          }
+          const effectiveKeyPtr = args[1];
+          payload.effective_key_ptr = safePtrString(effectiveKeyPtr);
+          payload.effective_key_qwords = readQwords(effectiveKeyPtr, 8);
+          const node = effectiveKeyPtr.readPointer();
           if (!node.isNull()) {
-            if (EBECO_FIX.q18) node.add(0x18).writePointer(ptr(EBECO_FIX.q18));
-            if (EBECO_FIX.q20) node.add(0x20).writePointer(ptr(EBECO_FIX.q20));
-            if (Object.prototype.hasOwnProperty.call(EBECO_FIX, 'q28')) {
-              node.add(0x28).writePointer(ptr(EBECO_FIX.q28));
+            if (ebec0Fix.q18) node.add(0x18).writePointer(ptr(ebec0Fix.q18));
+            if (ebec0Fix.q20) node.add(0x20).writePointer(ptr(ebec0Fix.q20));
+            if (Object.prototype.hasOwnProperty.call(ebec0Fix, 'q28')) {
+              node.add(0x28).writePointer(ptr(ebec0Fix.q28));
             }
-            if (Object.prototype.hasOwnProperty.call(EBECO_FIX, 'q30')) {
-              node.add(0x30).writePointer(ptr(EBECO_FIX.q30));
+            if (Object.prototype.hasOwnProperty.call(ebec0Fix, 'q30')) {
+              node.add(0x30).writePointer(ptr(ebec0Fix.q30));
             }
-            if (EBECO_FIX.q38) node.add(0x38).writePointer(ptr(EBECO_FIX.q38));
-            if (EBECO_FIX.q40) node.add(0x40).writePointer(ptr(EBECO_FIX.q40));
-            if (EBECO_FIX.q48) node.add(0x48).writePointer(ptr(EBECO_FIX.q48));
+            if (ebec0Fix.q38) node.add(0x38).writePointer(ptr(ebec0Fix.q38));
+            if (ebec0Fix.q40) node.add(0x40).writePointer(ptr(ebec0Fix.q40));
+            if (ebec0Fix.q48) node.add(0x48).writePointer(ptr(ebec0Fix.q48));
             payload.fixed_node = {
               node: safePtrString(node),
-              q18: EBECO_FIX.q18 || null,
-              q20: EBECO_FIX.q20 || null,
-              q28: Object.prototype.hasOwnProperty.call(EBECO_FIX, 'q28') ? EBECO_FIX.q28 : null,
-              q30: Object.prototype.hasOwnProperty.call(EBECO_FIX, 'q30') ? EBECO_FIX.q30 : null,
-              q38: EBECO_FIX.q38 || null,
-              q40: EBECO_FIX.q40 || null,
-              q48: EBECO_FIX.q48 || null,
+              q18: ebec0Fix.q18 || null,
+              q20: ebec0Fix.q20 || null,
+              q28: Object.prototype.hasOwnProperty.call(ebec0Fix, 'q28') ? ebec0Fix.q28 : null,
+              q30: Object.prototype.hasOwnProperty.call(ebec0Fix, 'q30') ? ebec0Fix.q30 : null,
+              q38: ebec0Fix.q38 || null,
+              q40: ebec0Fix.q40 || null,
+              q48: ebec0Fix.q48 || null,
             };
           }
         } catch (fixErr) {
@@ -807,6 +939,102 @@ rpc.exports.run = () => {
         return { queued_threaded: true, mode: MODE, target_thread_id: TARGET_THREAD_ID, self_username: selfUsername };
       }
 
+      if (MODE === 'batch-template') {
+        Process.runOnThread(TARGET_THREAD_ID, () => {
+          try {
+            stage = 'batch_template_clone_owner';
+            send({ kind: 'stage', stage, current_thread: Process.getCurrentThreadId() });
+            const ownerClone = wxAlloc(0x710);
+            Memory.copy(ownerClone, TEMPLATE_OWNER, 0x710);
+            rebasePointersInOwnerBlock(TEMPLATE_OWNER, ownerClone, 0x710);
+
+            stage = 'batch_template_clone_source';
+            send({ kind: 'stage', stage, current_thread: Process.getCurrentThreadId() });
+            const sourceOffset = TEMPLATE_SOURCE.sub(TEMPLATE_OWNER).toInt32();
+            const sourceClone = ownerClone.add(sourceOffset);
+            sourceClone.add(0x8).writePointer(sourceClone);
+            sourceClone.add(0x10).writePointer(ownerClone);
+
+            stage = 'batch_template_rewrite';
+            send({
+              kind: 'stage',
+              stage,
+              current_thread: Process.getCurrentThreadId(),
+              source: safePtrString(sourceClone),
+              owner: safePtrString(ownerClone),
+            });
+            writeHeapStdString(sourceClone.add(0xb0), TARGET_CONVERSATION, wxAlloc);
+            writeHeapStdString(sourceClone.add(0x660), TARGET_BODY, wxAlloc);
+
+            stage = 'batch_template_build_vector';
+            send({ kind: 'stage', stage, current_thread: Process.getCurrentThreadId() });
+            const pairElem = Memory.alloc(0x10);
+            pairElem.writePointer(sourceClone);
+            pairElem.add(Process.pointerSize).writePointer(ownerClone);
+            const vec = Memory.alloc(Process.pointerSize * 3);
+            vec.writePointer(pairElem);
+            vec.add(Process.pointerSize).writePointer(pairElem.add(0x10));
+            vec.add(Process.pointerSize * 2).writePointer(pairElem.add(0x10));
+
+            stage = 'batch_template_get_root';
+            send({ kind: 'stage', stage, current_thread: Process.getCurrentThreadId() });
+            const rootBuf = Memory.alloc(0x20);
+            rootBuf.writeByteArray(new Uint8Array(0x20));
+            getRoot(rootBuf);
+
+            stage = 'batch_template_get_service';
+            send({ kind: 'stage', stage, current_thread: Process.getCurrentThreadId() });
+            const svcBuf = Memory.alloc(0x20);
+            svcBuf.writeByteArray(new Uint8Array(0x20));
+            getSvc(rootBuf.readPointer(), svcBuf);
+
+            stage = 'batch_template_get_send_ctx';
+            send({ kind: 'stage', stage, current_thread: Process.getCurrentThreadId() });
+            const sendCtxBuf = Memory.alloc(0x20);
+            sendCtxBuf.writeByteArray(new Uint8Array(0x20));
+            getSendCtx(svcBuf.readPointer(), sendCtxBuf);
+            const sendCtx = sendCtxBuf.readPointer();
+
+            stage = 'batch_template_call';
+            send({
+              kind: 'stage',
+              stage,
+              current_thread: Process.getCurrentThreadId(),
+              send_ctx: safePtrString(sendCtx),
+              rewritten: {
+                conversation: readStdString(sourceClone.add(0xb0)),
+                uuid: readStdString(sourceClone.add(0x600)),
+                body: readStdString(sourceClone.add(0x660)),
+              },
+            });
+            const resultBuf = Memory.alloc(0x200);
+            resultBuf.writeByteArray(new Uint8Array(0x200));
+            buildBatchRequest(sendCtx, resultBuf, vec, 1);
+
+            stage = 'done';
+            send({
+              kind: 'autonomous_send_invoked',
+              mode: MODE,
+              stage,
+              thread_id: TARGET_THREAD_ID,
+              current_thread: Process.getCurrentThreadId(),
+              template_pair: {
+                source: safePtrString(sourceClone),
+                owner: safePtrString(ownerClone),
+              },
+              rewritten: {
+                conversation: readStdString(sourceClone.add(0xb0)),
+                uuid: readStdString(sourceClone.add(0x600)),
+                body: readStdString(sourceClone.add(0x660)),
+              },
+            });
+          } catch (e) {
+            send({ kind: 'invoke_error', stage, error: String(e), thread_id: TARGET_THREAD_ID, current_thread: Process.getCurrentThreadId(), mode: MODE });
+          }
+        });
+        return { queued_threaded: true, mode: MODE, target_thread_id: TARGET_THREAD_ID, self_username: selfUsername };
+      }
+
       stage = 'validate_template';
       send({ kind: 'stage', stage });
       if (TEMPLATE_SOURCE.isNull() || TEMPLATE_OWNER.isNull()) {
@@ -829,36 +1057,94 @@ rpc.exports.run = () => {
 
       stage = 'rewrite_strings';
       send({ kind: 'stage', stage });
-      writeHeapStdString(sourceClone.add(0xb0), TARGET_CONVERSATION, wxAlloc);
-      writeHeapStdString(sourceClone.add(0x660), TARGET_BODY, wxAlloc);
-      writeHeapStdString(sourceClone.add(0x600), randomUuid(), wxAlloc);
+      const originalConversation = readStdString(sourceClone.add(0xb0));
+      const originalConvCap = readU32(sourceClone.add(0xb0), 0x18);
+      const originalUuid = readStdString(sourceClone.add(0x600));
+      const originalUuidCap = readU32(sourceClone.add(0x600), 0x18);
+      const originalRefA = readU32(ownerClone, 0x8);
+      const originalRefB = readU32(ownerClone, 0xc);
 
-      if (MODE === 'wrapper') {
+      if (MODE === 'builder-minimal') {
+        if (TARGET_CONVERSATION !== originalConversation) {
+          writeHeapStdString(sourceClone.add(0xb0), TARGET_CONVERSATION, wxAlloc, originalConvCap || 31);
+        }
+        writeHeapStdString(sourceClone.add(0x660), TARGET_BODY, wxAlloc);
+        if (!originalUuid) {
+          writeHeapStdString(sourceClone.add(0x600), randomUuid(), wxAlloc, originalUuidCap || 47);
+        }
+        ownerClone.add(0x8).writeU32(OWNER_REF_A_OVERRIDE !== null ? OWNER_REF_A_OVERRIDE : (originalRefA || 3));
+        ownerClone.add(0xc).writeU32(OWNER_REF_B_OVERRIDE !== null ? OWNER_REF_B_OVERRIDE : (originalRefB || 2));
+      } else {
+        writeHeapStdString(sourceClone.add(0xb0), TARGET_CONVERSATION, wxAlloc, 31);
+        writeHeapStdString(sourceClone.add(0x600), randomUuid(), wxAlloc, 47);
+        writeHeapStdString(sourceClone.add(0x660), TARGET_BODY, wxAlloc);
+        ownerClone.add(0x8).writeU32(OWNER_REF_A_OVERRIDE !== null ? OWNER_REF_A_OVERRIDE : 7);
+        ownerClone.add(0xc).writeU32(OWNER_REF_B_OVERRIDE !== null ? OWNER_REF_B_OVERRIDE : 2);
+      }
+      sourceClone.add(0x9c).writeU32(1);
+      sourceClone.add(0xd8).writeU32(1);
+
+      if (MODE === 'wrapper' || MODE === 'wrapper-inplace' || MODE === 'wrapper-inplace-no-restore') {
         stage = 'clone_wrapper';
         send({ kind: 'stage', stage });
         if (TEMPLATE_WRAPPER.isNull()) {
           throw new Error('template wrapper is null');
         }
-        const wrapperClone = wxAlloc(0x120);
-        Memory.copy(wrapperClone, TEMPLATE_WRAPPER, 0x120);
+        let wrapperTarget = TEMPLATE_WRAPPER;
+        let pairClone = null;
+        let wrapperClone = null;
+        let originalConversation = null;
+        let originalBody = null;
+        let originalUuid = null;
+        let originalConversationCap = null;
+        let originalBodyCap = null;
+        let originalUuidCap = null;
 
-        stage = 'clone_pair';
-        send({ kind: 'stage', stage });
-        const pairPtr = TEMPLATE_WRAPPER.add(0x8).readPointer();
-        if (pairPtr.isNull()) {
-          throw new Error('template wrapper pair is null');
+        if (MODE === 'wrapper') {
+          wrapperClone = wxAlloc(0x120);
+          Memory.copy(wrapperClone, TEMPLATE_WRAPPER, 0x120);
+
+          stage = 'clone_pair';
+          send({ kind: 'stage', stage });
+          const pairPtr = TEMPLATE_WRAPPER.add(0x8).readPointer();
+          if (pairPtr.isNull()) {
+            throw new Error('template wrapper pair is null');
+          }
+          pairClone = wxAlloc(0x10);
+          Memory.copy(pairClone, pairPtr, 0x10);
+          pairClone.writePointer(sourceClone);
+          pairClone.add(Process.pointerSize).writePointer(ownerClone);
+          wrapperClone.add(0x8).writePointer(pairClone);
+          wrapperClone.add(0x10).writePointer(pairClone.add(0x10));
+          wrapperClone.add(0x18).writePointer(pairClone.add(0x10));
+          wrapperTarget = wrapperClone;
+        } else {
+          stage = 'capture_inplace_originals';
+          send({ kind: 'stage', stage });
+          originalConversation = readStdString(TEMPLATE_SOURCE.add(0xb0));
+          originalBody = readStdString(TEMPLATE_SOURCE.add(0x660));
+          originalUuid = readStdString(TEMPLATE_SOURCE.add(0x600));
+          originalConversationCap = readU32(TEMPLATE_SOURCE.add(0xb0), 0x18);
+          originalBodyCap = readU32(TEMPLATE_SOURCE.add(0x660), 0x18);
+          originalUuidCap = readU32(TEMPLATE_SOURCE.add(0x600), 0x18);
+          writeHeapStdString(TEMPLATE_SOURCE.add(0xb0), TARGET_CONVERSATION, wxAlloc, originalConversationCap || 31);
+          writeHeapStdString(TEMPLATE_SOURCE.add(0x660), TARGET_BODY, wxAlloc, originalBodyCap || 15);
+          writeHeapStdString(TEMPLATE_SOURCE.add(0x600), originalUuid || randomUuid(), wxAlloc, originalUuidCap || 47);
         }
-        const pairClone = wxAlloc(0x10);
-        Memory.copy(pairClone, pairPtr, 0x10);
-        pairClone.writePointer(sourceClone);
-        pairClone.add(Process.pointerSize).writePointer(ownerClone);
-        wrapperClone.add(0x8).writePointer(pairClone);
-        wrapperClone.add(0x10).writePointer(pairClone.add(0x10));
-        wrapperClone.add(0x18).writePointer(pairClone.add(0x10));
 
         stage = 'call_top_send';
-        send({ kind: 'stage', stage, wrapper_clone: safePtrString(wrapperClone) });
-        topSendFn(wrapperClone);
+        send({ kind: 'stage', stage, wrapper_target: safePtrString(wrapperTarget), inplace: MODE !== 'wrapper' });
+        try {
+          topSendFn(wrapperTarget);
+        } finally {
+          if (MODE === 'wrapper-inplace') {
+            stage = 'restore_inplace_originals';
+            send({ kind: 'stage', stage });
+            writeHeapStdString(TEMPLATE_SOURCE.add(0xb0), originalConversation || '', wxAlloc, originalConversationCap || 31);
+            writeHeapStdString(TEMPLATE_SOURCE.add(0x660), originalBody || '', wxAlloc, originalBodyCap || 15);
+            writeHeapStdString(TEMPLATE_SOURCE.add(0x600), originalUuid || '', wxAlloc, originalUuidCap || 47);
+          }
+        }
 
         stage = 'done';
         send({
@@ -873,6 +1159,7 @@ rpc.exports.run = () => {
             body: readStdString(sourceClone.add(0x660)),
           },
           wrapper_clone: safePtrString(wrapperClone),
+          wrapper_target: safePtrString(wrapperTarget),
         });
         return;
       }
@@ -909,6 +1196,10 @@ rpc.exports.run = () => {
 
       stage = 'call_builder';
       send({ kind: 'stage', stage, send_ctx: safePtrString(sendCtx), b78: safePtrString(sendCtx.add(0xb78).readPointer()) });
+      freshPairBuildTrace = [];
+      freshPairBuildActive = false;
+      freshPairBuildCurrent = null;
+      freshPairEbec0Index = 0;
       buildOnePairRequest(sendCtx, resultBuf, pairBuf, 1);
 
       stage = 'done';
@@ -1035,7 +1326,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pid", type=int)
     parser.add_argument("--thread-id", type=int)
-    parser.add_argument("--mode", choices=["builder", "wrapper", "fresh", "fresh-hijack1", "fresh-trace", "fresh-pair1", "fresh-batch1", "fresh-batch0"], default="fresh")
+    parser.add_argument("--mode", choices=["builder", "builder-minimal", "wrapper", "wrapper-inplace", "wrapper-inplace-no-restore", "fresh", "fresh-hijack1", "fresh-trace", "fresh-pair1", "fresh-batch1", "fresh-batch0", "batch-template"], default="fresh")
     parser.add_argument("--template-wrapper")
     parser.add_argument("--template-source")
     parser.add_argument("--template-owner")
@@ -1045,6 +1336,8 @@ def main() -> None:
     parser.add_argument("--wait-ms", type=int, default=5000)
     parser.add_argument("--pair-mode", type=int, default=1)
     parser.add_argument("--ebec0-fix-json")
+    parser.add_argument("--owner-ref-a", type=int)
+    parser.add_argument("--owner-ref-b", type=int)
     args = parser.parse_args()
 
     window = find_weixin_main_window()
@@ -1055,7 +1348,7 @@ def main() -> None:
     template_source = args.template_source
     template_owner = args.template_owner
     seed = None
-    if args.mode in ("builder", "wrapper"):
+    if args.mode in ("builder", "builder-minimal", "wrapper", "wrapper-inplace", "wrapper-inplace-no-restore"):
       if not template_wrapper or not template_source or not template_owner:
         seed_log = Path(args.seed_log) if args.seed_log else default_seed_log()
         seed = parse_seed_from_log(seed_log)
@@ -1083,6 +1376,8 @@ def main() -> None:
         .replace("{{TARGET_THREAD_ID}}", str(thread_id))
         .replace("{{PAIR_MODE}}", str(args.pair_mode))
         .replace("{{EBECO_FIX_JSON}}", json.dumps(ebec0_fix_json) if ebec0_fix_json is not None else "null")
+        .replace("{{OWNER_REF_A_JSON}}", json.dumps(args.owner_ref_a))
+        .replace("{{OWNER_REF_B_JSON}}", json.dumps(args.owner_ref_b))
     )
     script = session.create_script(rendered)
 
@@ -1107,6 +1402,8 @@ def main() -> None:
         "target_body": args.body,
         "pair_mode": args.pair_mode,
         "ebec0_fix_json": ebec0_fix_json,
+        "owner_ref_a": args.owner_ref_a,
+        "owner_ref_b": args.owner_ref_b,
     }
     print(json.dumps({"kind": "host_meta", "meta": meta}, ensure_ascii=False))
     result = script.exports_sync.run()

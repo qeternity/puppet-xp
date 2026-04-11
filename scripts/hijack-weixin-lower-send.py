@@ -23,6 +23,20 @@ function safePtrString(p) {
   }
 }
 
+function bytesToHex(arrbuf) {
+  try {
+    const bytes = new Uint8Array(arrbuf);
+    let out = '';
+    for (let i = 0; i < bytes.length; i++) {
+      const b = bytes[i].toString(16);
+      out += b.length === 1 ? ('0' + b) : b;
+    }
+    return out;
+  } catch (e) {
+    return null;
+  }
+}
+
 function readStdString(addr) {
   try {
     const len = addr.add(0x10).readU32();
@@ -194,6 +208,41 @@ function rebasePointersInOwnerBlock(originalOwner, clonedOwner, sizeBytes) {
   }
 }
 
+function dumpQwords(base, size) {
+  const out = {};
+  try {
+    if (!base || base.isNull()) return null;
+    for (let off = 0; off < size; off += 8) {
+      try {
+        out['0x' + off.toString(16)] = safePtrString(base.add(off).readPointer());
+      } catch (_) {
+        out['0x' + off.toString(16)] = null;
+      }
+    }
+    return out;
+  } catch (_) {
+    return null;
+  }
+}
+
+function dumpBytes(base, size) {
+  try {
+    if (!base || base.isNull()) return null;
+    return bytesToHex(base.readByteArray(size));
+  } catch (_) {
+    return null;
+  }
+}
+
+function readPtr(base) {
+  try {
+    if (!base || base.isNull()) return ptr('0x0');
+    return base.readPointer();
+  } catch (_) {
+    return ptr('0x0');
+  }
+}
+
 const mod = Process.getModuleByName('Weixin.dll');
 const selfUsername = getSelfUsername(mod);
 const wxAlloc = new NativeFunction(mod.base.add(0x6309d1c), 'pointer', ['ulong']);
@@ -214,6 +263,9 @@ let lastStage = null;
 let seenTaskKeys = {};
 let seenManagerKeys = {};
 let currentSyntheticTaskPtr = null;
+let helperTraceActive = false;
+let helperTraceThreadId = 0;
+let helperTraceLabel = null;
 
 Interceptor.attach(mod.base.add(0x314950), {
   onEnter(args) {
@@ -250,6 +302,105 @@ Interceptor.attach(mod.base.add(0x154bb80), {
   }
 });
 
+Interceptor.attach(mod.base.add(0x15e8200), {
+  onEnter(args) {
+    try {
+      const pairPtr = args[2];
+      if (pairPtr.isNull()) return;
+      const sourcePtr = pairPtr.readPointer();
+      if (sourcePtr.isNull()) return;
+      const conversation = readStdString(sourcePtr.add(0xb0));
+      const body = readStdString(sourcePtr.add(0x660));
+      if (conversation !== TARGET_CONVERSATION) return;
+      if (body !== TRIGGER_BODY && body !== TARGET_BODY) return;
+      helperTraceActive = true;
+      helperTraceThreadId = Process.getCurrentThreadId();
+      helperTraceLabel = body;
+      send({
+        kind: 'helper_builder_enter',
+        label: body,
+        thread_id: helperTraceThreadId,
+        send_ctx: safePtrString(args[0]),
+        result_buf: safePtrString(args[1]),
+        pair_ptr: safePtrString(pairPtr),
+        source_ptr: safePtrString(sourcePtr),
+        owner_ptr: safePtrString(pairPtr.add(Process.pointerSize).readPointer()),
+        mode: args[3].toUInt32(),
+        conversation,
+        body,
+        uuid: readStdString(sourcePtr.add(0x600)),
+      });
+    } catch (e) {
+      send({ kind: 'error', where: 'helper_builder_enter', error: String(e), stage: lastStage });
+    }
+  },
+  onLeave(retval) {
+    try {
+      if (!helperTraceActive) return;
+      if (Process.getCurrentThreadId() !== helperTraceThreadId) return;
+      send({
+        kind: 'helper_builder_leave',
+        label: helperTraceLabel,
+        thread_id: helperTraceThreadId,
+        retval: safePtrString(retval),
+      });
+    } catch (e) {
+      send({ kind: 'error', where: 'helper_builder_leave', error: String(e), stage: lastStage });
+    } finally {
+      helperTraceActive = false;
+      helperTraceThreadId = 0;
+      helperTraceLabel = null;
+    }
+  }
+});
+
+function helperHook(name, rva) {
+  Interceptor.attach(mod.base.add(rva), {
+    onEnter(args) {
+      try {
+        if (!helperTraceActive) return;
+        if (Process.getCurrentThreadId() !== helperTraceThreadId) return;
+        const q0 = readPtr(args[1]);
+        send({
+          kind: 'helper_' + name + '_enter',
+          label: helperTraceLabel,
+          thread_id: helperTraceThreadId,
+          args: {
+            rcx: safePtrString(args[0]),
+            rdx: safePtrString(args[1]),
+            r8: safePtrString(args[2]),
+            r9: safePtrString(args[3]),
+          },
+          q0_ptr: safePtrString(q0),
+          rdx_qwords: args[1] && !args[1].isNull() ? dumpQwords(args[1], 0x40) : null,
+          rdx_bytes_40: args[1] && !args[1].isNull() ? dumpBytes(args[1], 0x40) : null,
+          rdx_q0_qwords: !q0.isNull() ? dumpQwords(q0, 0x50) : null,
+          rdx_q0_bytes_50: !q0.isNull() ? dumpBytes(q0, 0x50) : null,
+        });
+      } catch (e) {
+        send({ kind: 'error', where: 'helper_' + name + '_enter', error: String(e), stage: lastStage });
+      }
+    },
+    onLeave(retval) {
+      try {
+        if (!helperTraceActive) return;
+        if (Process.getCurrentThreadId() !== helperTraceThreadId) return;
+        send({
+          kind: 'helper_' + name + '_leave',
+          label: helperTraceLabel,
+          thread_id: helperTraceThreadId,
+          retval: safePtrString(retval),
+        });
+      } catch (e) {
+        send({ kind: 'error', where: 'helper_' + name + '_leave', error: String(e), stage: lastStage });
+      }
+    }
+  });
+}
+
+helperHook('eb320', 0x15eb320);
+helperHook('ebec0', 0x15ebec0);
+
 Interceptor.attach(mod.base.add(0x15af8e0), {
   onEnter(args) {
     try {
@@ -269,12 +420,18 @@ Interceptor.attach(mod.base.add(0x15af8e0), {
       if (currentBody !== TRIGGER_BODY) return;
 
       this.pending = {
+        thread_id: Process.getCurrentThreadId(),
         wrapper: wrapper,
         sourceObj: sourceObj,
         ownerBase: ownerBase,
         conversation: readStdString(sourceObj.add(0xb0)),
         body: currentBody,
         uuid: readStdString(sourceObj.add(0x600)),
+        sourceOffset: sourceObj.sub(ownerBase).toInt32(),
+        conversationCap: readU32(sourceObj.add(0xb0), 0x18),
+        ownerRefA: readU32(ownerBase, 0x8),
+        ownerRefB: readU32(ownerBase, 0xc),
+        ownerSnapshotHex: bytesToHex(ownerBase.readByteArray(0x710)),
       };
       send({ kind: 'seed_captured', pending: this.pending });
     } catch (e) {
@@ -346,6 +503,9 @@ Interceptor.attach(mod.base.add(0x15af8e0), {
       buildOnePairRequest(sendCtx, resultBuf, pairBuf, 1);
       if (BUILDER_ONLY) {
         mark('builder_only_done', {
+          owner_clone: safePtrString(ownerClone),
+          source_clone: safePtrString(sourceClone),
+          pair_buf: safePtrString(pairBuf),
           conversation: readStdString(sourceClone.add(0xb0)),
           body: readStdString(sourceClone.add(0x660)),
           uuid: readStdString(sourceClone.add(0x600)),

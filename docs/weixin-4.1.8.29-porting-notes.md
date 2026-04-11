@@ -4955,3 +4955,2077 @@ Current interpretation:
   - however it is still failing before the final delivery/ack leg
 - therefore the remaining blocker is no longer “can we create a local message?”
   but “what extra state is required for a valid successful send?”
+Successful manual resend of the failed `skynet` row:
+
+- on the fresh main UI session:
+  - `Weixin.exe` PID `1624`
+  - main window thread `8800`
+- all proof hooks were reattached to the real main UI process:
+  - `monitor-weixin-send-task-hook.py --pid 1624`
+  - `monitor-weixin-manager-message-hook.py --pid 1624`
+  - `probe-weixin-send-entry-callers.py --pid 1624 --baseline-seconds 1`
+  - `probe-weixin-send-builder-inner.py`
+- after clicking the red `resend message` on the failed `skynet` row exactly once:
+  - `monitor-weixin-send-task-hook.py` recorded a native outgoing task:
+    - `conversation_id = 27208021116@chatroom`
+    - `sender_username = wxid_yfe3gm54e5il12`
+    - `content = skynet`
+    - `msgsource = <msgsource><alnode><fr>1</fr></alnode></msgsource>`
+  - `monitor-weixin-manager-message-hook.py` also recorded a successful compact
+    manager-dispatch event for the same resend:
+    - `conversation_id = 27208021116@chatroom`
+    - `title = Zuma Internal`
+    - `sender_username = wxid_yfe3gm54e5il12`
+    - `direction = sent`
+    - `content = skynet`
+    - `flag = 1`
+    - candidate timestamp field `+0x90 = 1775750447`
+- this proves the resend click did **succeed** and reached the real send-success
+  layer, not just local row/task creation
+
+Top-level wrapper result during resend:
+
+- `probe-weixin-send-entry-callers.py` did **not** log a new top-level
+  `FUN_1815af8e0` caller for the successful resend
+- current interpretation:
+  - resend likely bypasses the normal top send wrapper path
+  - the real resend path is lower in the builder/send stack
+
+Successful resend builder trace on worker thread `9268`:
+
+- first resend `eb320_enter`:
+  - `map_base = 0x1e13a178030`
+  - `pair_copy = 0x27db9feff0`
+  - `out_ptr = 0x1e13daa5fa8`
+  - `out_qwords`
+    - `q0 = 0x1e13d43d9e0`
+    - `q8 = 0x0`
+    - `q10 = 0x14`
+    - `q18 = 0x1f`
+    - `q20 = 0x0`
+    - `q28 = 0x0`
+- first resend `ebec0_enter`:
+  - `builder = 0x1e13aff0c20`
+  - `key_ptr = 0x1e13daa5fa8`
+  - `key_strings.s0 = 27208021116@chatroom`
+  - first `key_node.ptr = 0x1e13d43d9e0`
+  - first `key_node.qwords`
+    - `0x18 = 0x1e13d43d9e8`
+    - `0x20 = 0x1e13bde5de0`
+    - `0x28 = 0x800024007524f877`
+    - `0x30 = 0x7ffc914fe598`
+    - `0x38 = 0x1e13bec0e10`
+    - `0x40 = 0x1e13bec0e00`
+    - `0x48 = 0x1e13bde5df0`
+- second resend `eb320_enter`:
+  - `map_base = 0x1e13a178070`
+  - `pair_copy = 0x27db9feeb0`
+  - `out_ptr = 0x27db9fed20`
+  - `out_qwords`
+    - `q0 = 0x1e13d43da70`
+    - `q8 = 0x0`
+    - `q10 = 0x16`
+    - `q18 = 0x1f`
+    - `q20 = 0x69d7cd2f00000c89`
+    - `q28 = 0x345b0`
+- first resend `ebec0_leave = 0xf`
+- later resend `ebec0_enter`:
+  - `key_ptr = 0x1e13c064b20`
+  - `key_node.ptr = 0x1e13d43d3b0`
+  - `key_node.qwords`
+    - `0x18 = 0x1e13d43d300`
+    - `0x20 = 0x1e13bde5de0`
+    - `0x28 = 0x900003e17543f8ea`
+    - `0x30 = 0x1e13d43daa0`
+    - `0x38 = 0x1e13d43dd70`
+    - `0x40 = 0x1e13dae0080`
+    - `0x48 = 0x1e13dae0070`
+- final resend `ebec0_leave = 0x1e13afa6640`
+
+Current best next move after the successful manual resend:
+
+- the fastest route to a fully successful autonomous send may be:
+  1. create the failed local row / scheduled send task using the repaired
+     autonomous builder path
+  2. invoke WeChat's own resend path for that failed row
+- resend is now the strongest known bridge between:
+  - synthetic local-row creation
+  - and actual downstream successful delivery
+Follow-up autonomous retry on the successful resend session (`PID 1624`, worker
+thread `9268`):
+
+- retried the repaired autonomous `fresh-pair1` path on the same live resend
+  worker thread using the successful resend first-node values and:
+  - `pair_mode = 1`
+  - body `skynet2`
+- result:
+  - reached:
+    - `fresh_pair_build_enter`
+    - `fresh_pair_eb320_enter`
+    - `mk_pair_copy`
+    - `emit_builder_record`
+    - `fresh_pair_eb320_leave`
+    - `fresh_pair_ebec0_enter`
+    - `msg_kind_get`
+    - `msg_kind_get`
+    - `link_builder_a`
+    - `msg_flag_set`
+    - `msg_flag_set`
+  - then failed with:
+    - `invoke_error`
+    - `Error: access violation accessing 0x0`
+  - no external `send_task_event`
+  - no external `manager_message_event`
+
+- retried again on the same live resend worker thread using:
+  - `pair_mode = 257`
+  - body `skynet3`
+- result:
+  - got farther than the `pair_mode = 1` retry:
+    - `fresh_pair_build_enter`
+    - `fresh_pair_eb320_enter`
+    - `mk_pair_copy`
+    - `fresh_pair_eb320_leave`
+    - `fresh_pair_ebec0_enter`
+    - `msg_kind_get`
+    - `msg_kind_get`
+    - `fresh_pair_ebec0_leave retval=0xf`
+  - but still no external:
+    - `send_task_event`
+    - `manager_message_event`
+  - and `Weixin.exe` disappeared immediately afterward
+
+Current interpretation after those retries:
+
+- the successful manual resend worker thread and first-node repair values are
+  genuinely helpful
+- but simply replaying the repaired autonomous lower builder on that thread is
+  still **not** enough to reproduce the successful resend path
+- the next high-value target is therefore the actual resend wrapper/caller chain,
+  not more blind lower-builder retries
+
+Fresh lower-send success on clean session `PID 10040`:
+
+- re-armed the proven builder-only lower-send hijack on:
+  - `Weixin.exe` PID `10040`
+  - live worker thread `2804`
+  - trigger body `seedlower6`
+- successful seed capture:
+  - `wrapper = 0x1618a6ac770`
+  - `sourceObj = 0x1618ff99e20`
+  - `ownerBase = 0x1618ff99e10`
+  - `conversation = 27208021116@chatroom`
+  - `body = seedlower6`
+  - `uuid = 67187dd2-6821-4ea1-9c9d-0eebcdff8f09`
+- successful builder-only clone:
+  - `owner_clone = 0x16191bc63e0`
+  - `source_clone = 0x16191bc63f0`
+  - `pair_buf = 0x16191478e70`
+  - `send_ctx = 0x1618f75c7c0`
+  - `b78 = 0x1618e94a240`
+- proof:
+  - send-task hook emitted:
+    - `conversation_id = 27208021116@chatroom`
+    - `content = skynet`
+  - manager-dispatch hook emitted:
+    - `conversation_id = 27208021116@chatroom`
+    - `title = Zuma Internal`
+    - `content = skynet`
+
+Focused successful builder-call context capture on the same session:
+
+- new tracer script:
+  - `scripts/probe-weixin-builder-call-context.py`
+- successful ordinary send frame captured for `seedlower5`:
+  - `thread_id = 2804`
+  - `caller_rva = 0x15e9c0b`
+  - `mode = 1`
+  - `send_ctx = 0x1618f75c7c0`
+  - `result_buf = 0x56f49ff2a0`
+  - `pair_ptr = 0x56f49ff360`
+  - `source_ptr = 0x1618ee85a80`
+  - `owner_ptr = 0x1618ee85a70`
+  - `conversation = 27208021116@chatroom`
+  - `body = seedlower5`
+  - `uuid = f46857f9-812e-44eb-aa4f-bbb474ec0916`
+- important good-frame field values:
+  - `source + 0xb0`:
+    - text `27208021116@chatroom`
+    - `len = 20`
+    - `cap = 31`
+  - `source + 0x600`:
+    - valid UUID text
+    - `len = 36`
+    - `cap = 47`
+  - `source + 0x660`:
+    - text `seedlower5`
+    - `len = 10`
+    - `cap = 15`
+  - `source + 0x680`:
+    - empty
+    - `cap = 15`
+  - `source + 0x9c = 1`
+  - `source + 0xd8 = 1`
+  - owner refs at `owner + 0x8/0xc = {7,2}`
+- successful `buildOnePairRequest(...)` output:
+  - `retval = result_buf`
+  - `result_post_qwords`
+    - `0x20 = 0xf`
+    - `0x28 = 0x161892f04e0`
+    - `0x30 = 0x161892f04d0`
+    - `0x38 = 0x1618f75c7b0`
+
+Detached builder-path diff and repair:
+
+- detached replay was run on the same good worker thread:
+  - `thread_id = 2804`
+  - `send_ctx = 0x1618f75c7c0`
+  - template clone based on the successful builder-only clone:
+    - `template_source = 0x16191bc63f0`
+    - `template_owner = 0x16191bc63e0`
+- first detached trace (`skynet-detach1`) showed several mismatches versus the
+  good frame:
+  - `source + 0x600` UUID string was invalid / unreadable (`text = null`)
+  - `source + 0xb0` conversation cap was only `20`, not `31`
+  - owner refs were `{2,2}`, not `{7,2}`
+  - result buffer was all-zero before entry
+  - `caller_rva` was synthetic runtime `0x4d58051e`, not the good live caller
+    `0x15e9c0b`
+- this explained why the detached path still diverged despite using the correct
+  worker thread and `send_ctx`
+
+Autonomous script repair applied:
+
+- updated `scripts/send-weixin-text-autonomous.py` builder mode to match the
+  successful in-hook normalization:
+  - rewrite `source + 0xb0` with forced cap `31`
+  - rewrite `source + 0x600` with a fresh UUID and forced cap `47`
+  - rewrite `source + 0x660`
+  - force owner refs to `{7,2}`
+  - force `source + 0x9c = 1`
+  - force `source + 0xd8 = 1`
+
+Detached retry after normalization fix (`skynet-detach2`):
+
+- same thread/context:
+  - `PID 10040`
+  - `thread_id = 2804`
+  - `send_ctx = 0x1618f75c7c0`
+- result:
+  - old immediate `call_builder` access violation is gone
+  - the detached script now gets through:
+    - `start`
+    - `validate_template`
+    - `clone_owner`
+    - `clone_source`
+    - `rewrite_strings`
+    - `build_pair`
+    - `build_result`
+    - `get_root`
+    - `get_service`
+    - `get_send_ctx`
+    - `call_builder`
+  - after the builder call the script terminates with:
+    - `final_state_error = script has been destroyed`
+  - no external proof event for `skynet-detach2` was observed before the
+    process disappeared
+
+Current interpretation after the `skynet-detach2` fix:
+
+- the normalization patch was real and necessary
+- the detached/no-seed path is now significantly closer to the working in-hook
+  path than before
+- the remaining blocker is no longer the obvious cloned source/owner field set
+- the strongest remaining gap is transient call context around the successful
+  live caller:
+  - detached caller RVA is still synthetic/runtime-owned
+  - successful caller RVA is stable live code at `0x15e9c0b`
+- next step remains:
+  - capture and reproduce the caller-side transient context around the good
+    `buildOnePairRequest(...)` invocation, rather than continuing blind object
+    mutation
+
+Current clean-session checkpoint on PID `13080`:
+
+- fresh seeded lower-send success:
+  - trigger: `seedlower8`
+  - worker thread: `1472`
+  - seed wrapper/source/owner:
+    - `wrapper = 0x29bb029ebd0`
+    - `sourceObj = 0x29bb73aadd0`
+    - `ownerBase = 0x29bb73aadc0`
+  - working cloned builder-only pair:
+    - `owner_clone = 0x29bb8426d10`
+    - `source_clone = 0x29bb8426d20`
+    - `pair_buf = 0x29bb7983e10`
+    - `send_ctx = 0x29bb6857420`
+  - proof hooks both confirmed a real synthetic send:
+    - send-task hook saw `content = skynet`
+    - manager-dispatch hook saw `content = skynet`
+
+Focused builder-call context diff on PID `13080`:
+
+- ordinary seed send (`seedlower8`):
+  - `thread_id = 1472`
+  - `caller_rva = 0x15e9c0b`
+  - `mode = 1`
+  - `send_ctx = 0x29bb6857420`
+  - `source + 0xb0`:
+    - text `27208021116@chatroom`
+    - `len = 20`
+    - `cap = 31`
+  - `source + 0x600`:
+    - UUID `bf95a34b-0648-4d13-a0c8-817bf655cceb`
+    - `len = 36`
+    - `cap = 47`
+  - `source + 0x660`:
+    - text `seedlower8`
+    - `len = 10`
+    - `cap = 15`
+  - owner refs:
+    - `{7,2}`
+
+- successful synthetic in-hook `skynet`:
+  - `thread_id = 1472`
+  - `caller_rva = 0xffffffffd1687ca1`
+  - `mode = 1`
+  - `send_ctx = 0x29bb6857420`
+  - `source_ptr = 0x29bb8426d20`
+  - `owner_ptr = 0x29bb8426d10`
+  - `source + 0xb0`:
+    - text `27208021116@chatroom`
+    - `len = 20`
+    - `cap = 20`
+  - `source + 0x600`:
+    - same seed UUID `bf95a34b-0648-4d13-a0c8-817bf655cceb`
+    - `len = 36`
+    - `cap = 47`
+  - `source + 0x660`:
+    - text `skynet`
+    - `len = 6`
+    - `cap = 15`
+  - owner refs:
+    - `{3,2}`
+  - result buffer:
+    - all-zero pre-state is acceptable
+    - successful leave state:
+      - `0x20 = 0xf`
+      - `0x28 = 0x29bb847c310`
+      - `0x30 = 0x29bb847c300`
+      - `0x38 = 0x0`
+
+Detached builder observations on the same session:
+
+- `skynet-detach3`:
+  - send-task hook observed a real scheduled task for `content = skynet-detach3`
+  - manager-dispatch hook did **not** observe a matching success event
+  - interpretation:
+    - detached path can at least create/schedule a task or local row
+    - but it still diverges before final successful send
+
+- `skynet-detach4` with the new `builder-minimal` mode in
+  `scripts/send-weixin-text-autonomous.py`:
+  - detached call *did* reach `buildOnePairRequest(...)`
+  - tracer captured:
+    - `thread_id = 1472`
+    - `caller_rva = 0x4cec051e`
+    - `mode = 1`
+    - `send_ctx = 0x29bb6857420`
+    - `source_ptr = 0x29bb6ec00f0`
+    - `owner_ptr = 0x29bb6ec00e0`
+    - body `skynet-detach4`
+  - detached source/owner still diverged from the successful in-hook clone:
+    - owner refs were `{2,2}`, not `{3,2}`
+    - builder entered but no successful leave was captured
+  - interpretation:
+    - the failure is now inside or after builder entry, not at the call boundary
+
+Worker-thread callback exploration:
+
+- new script:
+  - `scripts/sample-weixin-thread-calls.py`
+  - used to sample hot recurring call targets on the real send worker thread
+- thread `1472` hot RVAs included:
+  - `0xbd3ad0`
+  - `0xbcf250`
+  - `0xa1e0`
+  - `0xbd3cb0`
+  - plus several `0x6309... / 0x64d...` utility-heavy frames
+
+- new autonomous callback script:
+  - `scripts/send-weixin-text-via-hot-thread-hook.py`
+- first callback experiment:
+  - hook RVA `0xbd3ad0`
+  - body `autonomous-hot1`
+  - it did fire on thread `1472`
+  - but the cloned template state was already degraded by the time the callback
+    ran:
+    - `uuid = null`
+    - owner refs `{2,2}`
+  - WeChat died immediately afterward, and no proof hook saw a new send
+  - interpretation:
+    - this was **not** a valid replacement for the successful in-hook template
+    - it also showed that stale heap template pointers cannot be reused blindly
+      for later callback-based autonomous sends
+
+Current best interpretation:
+
+- the proven seeded synthetic send path is reproducible
+- the builder-context diff is real and useful
+- the first hot-thread callback idea is still promising, but it must use a
+  genuinely live template, not an older clone pointer that has already drifted
+  in heap state
+- next time this branch is retried, the callback hook should be paired with a
+  fresh live seed/template capture on the same session, or another way to
+  produce a current valid template before the callback fires
+
+Fresh-session callback retest on PID `13292`:
+
+- fresh seeded path was re-proven with:
+  - trigger `seedlower9`
+  - worker thread `11056`
+  - seed source/owner:
+    - `0x1c779c79dd0`
+    - `0x1c779c79dc0`
+  - successful synthetic clone:
+    - `source = 0x1c77ba7e400`
+    - `owner = 0x1c77ba7e3f0`
+  - `send_ctx = 0x1c7791cf0c0`
+  - UUID `929d1ae4-8030-4541-9496-c4a345ec3b24`
+  - proof hooks both saw `content = skynet`
+
+- callback thread sampling on the same worker thread `11056` again showed the
+  same hot recurring candidates, with `0xbd3ad0` still a strong lightweight
+  callback candidate:
+  - `0xbd3ad0`
+  - `0xbd3cb0`
+  - `0xbcf250`
+  - `0xa1e0`
+
+- callback retest using the fresh successful synthetic clone pointers:
+  - script:
+    - `scripts/send-weixin-text-via-hot-thread-hook.py`
+  - target:
+    - `body = autonomous-hot2`
+    - hook RVA `0xbd3ad0`
+  - callback really did fire on the correct worker thread `11056`
+  - but by the time the callback executed, the cloned template had already
+    drifted:
+    - `uuid = null`
+    - owner refs `{2,2}`
+  - result:
+    - `hot_hook_error = access violation accessing 0x0`
+    - no proof hook observed a new send
+
+Attach-time snapshot repair for the callback script:
+
+- `scripts/send-weixin-text-via-hot-thread-hook.py` was patched to snapshot the
+  owner block and key source fields at attach time instead of rereading the live
+  heap template later
+- the patch added:
+  - `OWNER_BLOCK_SIZE = 0x710`
+  - `SNAPSHOT_BYTES`
+  - `SNAPSHOT_UUID`
+  - `SNAPSHOT_CONVERSATION`
+  - `SNAPSHOT_CONV_CAP`
+  - `SNAPSHOT_REF_A`
+  - `SNAPSHOT_REF_B`
+  - `template_snapshot` logging
+
+Callback retest on PID `1952` after the snapshot patch:
+
+- fresh seeded path was re-proven again with:
+  - trigger `seedlower11`
+  - worker thread `11852`
+  - seed source/owner:
+    - `0x241ee1c9290`
+    - `0x241ee1c9280`
+  - successful synthetic clone:
+    - `source = 0x241f5632260`
+    - `owner = 0x241f5632250`
+  - `send_ctx = 0x241f4c50710`
+  - UUID `cb5bec93-1b2d-4c02-ad8e-664862afd559`
+  - proof hooks both saw `content = skynet`
+
+- the first callback retry on the same session still showed:
+  - `template_snapshot.uuid = null`
+  - `template_snapshot.ref_a/ref_b = {2,2}`
+  - then:
+    - `hot_hook_error = access violation accessing 0x0`
+- this clarified the real issue:
+  - even at attach time, the **successful synthetic clone pointers** are already
+    too stale to use as a callback template source
+  - the next callback attempt must use the **fresh original seed source/owner**
+    from the same session, not the later synthetic clone pointers
+
+Unfinished follow-up:
+
+- immediately after that finding, WeChat rolled over again before the retest
+  against the fresh original seed template could be completed
+- so the next callback branch should start from:
+  - a fresh session
+  - one fresh seeded success
+  - then callback attach using the original seed source/owner, not the synthetic
+    clone source/owner
+
+## 2026-04-09 Session7 raw-owner snapshot retest
+
+Fresh seeded success on PID `11964`:
+
+- trigger `seedlower13`
+- worker thread `6440`
+- seed wrapper/source/owner:
+  - `wrapper = 0x153ae004260`
+  - `source = 0x153ab714e40`
+  - `owner = 0x153ab714e30`
+- `send_ctx = 0x153ac291a00`
+- UUID `1d825b30-ce46-440c-ac16-6ab28e5adb9e`
+- proof hooks again saw:
+  - `content = seedlower13`
+  - `content = skynet`
+
+Raw seed snapshot captured by the patched lower-send hook:
+
+- `sourceOffset = 16`
+- `conversationCap = 31`
+- raw top-send seed refs:
+  - `ownerRefA = 5`
+  - `ownerRefB = 2`
+- full `ownerSnapshotHex` was emitted in
+  `AppData\\Local\\Temp\\weixin_lower_hijack_session7.txt`
+
+Builder-context diff on the same session:
+
+- real seed `buildOnePairRequest(...)` entry:
+  - caller RVA `0x15e9c0b`
+  - mode `1`
+  - `owner + 0x8/0xc = {4,2}` packed as `0x200000004`
+- successful in-hook synthetic `skynet` entry:
+  - caller RVA `0xffffffffce907ca1`
+  - mode `1`
+  - `owner + 0x8/0xc = {3,2}` packed as `0x200000003`
+- successful synthetic builder leave returned a valid result buffer:
+  - `q20 = 0xf`
+  - `q28 = 0x153ac94b630`
+  - `q30 = 0x153ac94b620`
+
+Raw-snapshot callback retest:
+
+- script:
+  - `scripts/send-weixin-text-via-hot-thread-hook.py`
+- hook RVA:
+  - `0xbd3ad0`
+- target:
+  - `body = autonomous-hot6`
+- this was the first retest using the fresh original seed source/owner plus the
+  raw captured `ownerSnapshotHex`, instead of rereading stale live heap pointers
+- the callback fired on the correct worker thread `6440`
+- the callback built a fresh cloned pair with the expected values:
+  - `conversation = 27208021116@chatroom`
+  - `body = autonomous-hot6`
+  - `uuid = 1d825b30-ce46-440c-ac16-6ab28e5adb9e`
+  - `owner_ref_a/ref_b = {5,2}`
+- but `buildOnePairRequest(...)` still faulted inside the callback:
+  - first `hot_hook_error = access violation accessing 0xffffffffffffffff`
+  - then repeated `hot_hook_error = access violation accessing 0x0`
+- no proof hook observed a new send-task row or manager-dispatch success for
+  `autonomous-hot6`
+
+Interpretation:
+
+- stale template pointers were **not** the only blocker
+- even with a fresh raw owner snapshot and the original seed source/owner, the
+  hot callback still lacks something needed for a safe builder call
+- the most likely remaining mismatch is now the seed/callback header state at
+  `owner + 0x8/0xc` or another callback-site-specific caller-local/context edge,
+  not the basic lower source/owner object layout
+
+Next callback experiments to try, in order:
+
+1. reuse the same raw owner snapshot but override refs to the real builder-entry
+   seed values `{4,2}`
+2. if that still faults, retry with the successful synthetic builder-entry refs
+   `{3,2}`
+3. if both still fail, treat `0xbd3ad0` as “close but still not equivalent” and
+   capture the next tighter recurring callback site on the same worker thread
+   (`0xbd3cb0` / `0xbcf250`) using the same raw-snapshot method
+
+## 2026-04-09 Session8 callback retest
+
+Fresh seeded success on PID `1748`:
+
+- trigger `seedlower14`
+- worker thread `9392`
+- seed wrapper/source/owner:
+  - `wrapper = 0x1fb427122b0`
+  - `source = 0x1fb41536510`
+  - `owner = 0x1fb41536500`
+- `send_ctx = 0x1fb4078e8d0`
+- UUID `381aa980-a0f5-42ec-aff7-dcc834ec7336`
+- raw seed snapshot:
+  - `sourceOffset = 16`
+  - `conversationCap = 31`
+  - raw top-send refs `{5,2}`
+  - `ownerSnapshotHex` captured in
+    `AppData\\Local\\Temp\\weixin_lower_hijack_session8.txt`
+- proof hooks again saw:
+  - `content = seedlower14`
+  - `content = skynet`
+
+Builder-context diff on the same session:
+
+- real seed builder entry:
+  - thread `9392`
+  - caller RVA `0x15e9c0b`
+  - mode `1`
+  - builder-entry refs `{4,2}` packed as `0x200000004`
+- successful in-hook synthetic `skynet` entry:
+  - thread `9392`
+  - caller RVA `0xffffffffd1c57ca1`
+  - mode `1`
+  - builder-entry refs `{3,2}` packed as `0x200000003`
+- successful synthetic builder leave again returned:
+  - `q20 = 0xf`
+  - `q28 = 0x1fb425a5550`
+  - `q30 = 0x1fb425a5540`
+
+Raw-snapshot callback retest with builder-entry seed refs `{4,2}`:
+
+- script:
+  - `scripts/send-weixin-text-via-hot-thread-hook.py`
+- hook RVA:
+  - `0xbd3ad0`
+- target:
+  - `body = autonomous-hot9`
+- callback fired on the correct worker thread `9392`
+- the cloned callback pair carried the expected fresh values:
+  - `conversation = 27208021116@chatroom`
+  - `body = autonomous-hot9`
+  - `uuid = 381aa980-a0f5-42ec-aff7-dcc834ec7336`
+  - `owner_ref_a/ref_b = {4,2}`
+- failure changed shape versus the raw `{5,2}` test:
+  - first `hot_hook_error = system error`
+  - then repeated `hot_hook_error = access violation accessing 0x0`
+- no proof hook observed a new task row or manager-dispatch success for
+  `autonomous-hot9`
+- immediately after this retest, `Weixin.exe` PID `1748` disappeared before the
+  next `{3,2}` callback variant could be attempted
+
+Interpretation:
+
+- callback-site header state does matter; changing `{5,2}` -> `{4,2}` changed
+  the failure shape
+- but `0xbd3ad0` still is not sufficient yet for a successful builder-only
+  autonomous send
+- the remaining highest-value live test is still the callback retest with the
+  successful synthetic builder-entry refs `{3,2}`
+- if `{3,2}` still fails, the next callback site to test should be `0xbd3cb0`
+  or `0xbcf250` using the same raw-snapshot method
+
+## 2026-04-09 Session9 callback retest
+
+Fresh seeded success on PID `7652`:
+
+- trigger `seedlower15`
+- worker thread `12936`
+- seed wrapper/source/owner:
+  - `wrapper = 0x1d4dd558530`
+  - `source = 0x1d4dd38f8a0`
+  - `owner = 0x1d4dd38f890`
+- `send_ctx = 0x1d4dcb6d5e0`
+- UUID `af317d2c-d55c-4502-b827-7e55f0c7465d`
+- raw seed snapshot:
+  - `sourceOffset = 16`
+  - `conversationCap = 31`
+  - raw top-send refs `{5,2}`
+  - `ownerSnapshotHex` captured in
+    `AppData\\Local\\Temp\\weixin_lower_hijack_session9.txt`
+- proof hooks again saw:
+  - `content = seedlower15`
+  - `content = skynet`
+
+Builder-context diff on the same session:
+
+- real seed builder entry:
+  - thread `12936`
+  - caller RVA `0x15e9c0b`
+  - mode `1`
+  - builder-entry refs `{4,2}` packed as `0x200000004`
+- successful in-hook synthetic `skynet` entry:
+  - thread `12936`
+  - caller RVA `0xffffffffcc097ca1`
+  - mode `1`
+  - builder-entry refs `{3,2}` packed as `0x200000003`
+- successful synthetic builder leave again returned:
+  - `q20 = 0xf`
+  - `q28 = 0x1d4d4e52200`
+  - `q30 = 0x1d4d4e521f0`
+
+Raw-snapshot callback retest with successful synthetic refs `{3,2}`:
+
+- script:
+  - `scripts/send-weixin-text-via-hot-thread-hook.py`
+- hook RVA:
+  - `0xbd3ad0`
+- target:
+  - `body = autonomous-hot10`
+- callback fired on the correct worker thread `12936`
+- the cloned callback pair carried the expected fresh values:
+  - `conversation = 27208021116@chatroom`
+  - `body = autonomous-hot10`
+  - `uuid = af317d2c-d55c-4502-b827-7e55f0c7465d`
+  - `owner_ref_a/ref_b = {3,2}`
+- failure shape:
+  - first `hot_hook_error = access violation accessing 0xffffffffffffffff`
+  - then repeated `hot_hook_error = access violation accessing 0x0`
+- no proof hook observed a new task row or manager-dispatch success for
+  `autonomous-hot10`
+- immediately after this retest, `Weixin.exe` PID `7652` disappeared before the
+  next callback-site variant could be attempted
+
+Interpretation after Session9:
+
+- all three high-value header-state variants at callback site `0xbd3ad0` have
+  now been exercised:
+  - raw top-send refs `{5,2}`
+  - real seed builder-entry refs `{4,2}`
+  - successful synthetic builder-entry refs `{3,2}`
+- none of them produced a successful builder-only autonomous send
+- this strongly suggests the remaining blocker is the callback site itself, not
+  just owner/source header state
+
+Next callback-site experiments:
+
+1. retry the same raw-snapshot method at `0xbd3cb0`
+2. if that still fails, retry at `0xbcf250`
+3. if both fail, revisit whether the autonomous branch must be driven from a
+   different recurring callback family or whether a lighter in-hook post-send
+   queueing strategy is the better path
+
+## 2026-04-09 Session10 callback-site retest
+
+Fresh seeded success on PID `9792`:
+
+- trigger `seedlower16`
+- worker thread `6632`
+- seed wrapper/source/owner:
+  - `wrapper = 0x1facbf5a4d0`
+  - `source = 0x1fac3f7a9d0`
+  - `owner = 0x1fac3f7a9c0`
+- `send_ctx = 0x1facb9058c0`
+- UUID `5b79a57c-80f4-40d4-8d64-7ff36a2223c4`
+- raw seed snapshot:
+  - `sourceOffset = 16`
+  - `conversationCap = 31`
+  - raw top-send refs `{5,2}`
+  - `ownerSnapshotHex` captured in
+    `AppData\\Local\\Temp\\weixin_lower_hijack_session10.txt`
+- proof hooks again saw:
+  - `content = seedlower16`
+  - `content = skynet`
+
+Builder-context diff on the same session:
+
+- real seed builder entry:
+  - thread `6632`
+  - caller RVA `0x15e9c0b`
+  - mode `1`
+  - builder-entry refs `{4,2}` packed as `0x200000004`
+- successful in-hook synthetic `skynet` entry:
+  - thread `6632`
+  - caller RVA `0xffffffffcc697ca1`
+  - mode `1`
+  - builder-entry refs `{3,2}` packed as `0x200000003`
+- successful synthetic builder leave again returned:
+  - `q20 = 0xf`
+  - `q28 = 0x1facd99a060`
+  - `q30 = 0x1facd99a050`
+
+Callback-site retest at `0xbd3cb0` using raw snapshot + `{3,2}`:
+
+- script:
+  - `scripts/send-weixin-text-via-hot-thread-hook.py`
+- target:
+  - `body = autonomous-hot11`
+- callback fired on the correct worker thread `6632`
+- the cloned callback pair carried the expected values:
+  - `conversation = 27208021116@chatroom`
+  - `body = autonomous-hot11`
+  - `uuid = 5b79a57c-80f4-40d4-8d64-7ff36a2223c4`
+  - `owner_ref_a/ref_b = {3,2}`
+- failure shape:
+  - first `hot_hook_error = access violation accessing 0xffffffffffffffff`
+  - then repeated `hot_hook_error = access violation accessing 0x0`
+- no proof hook observed a new task row or manager-dispatch success for
+  `autonomous-hot11`
+
+Callback-site retest at `0xbcf250` using raw snapshot + `{3,2}`:
+
+- same session, same raw seed snapshot, same worker thread `6632`
+- target:
+  - `body = autonomous-hot12`
+- `Weixin.exe` PID `9792` disappeared before the script could even attach, so
+  this site was **not** successfully exercised on the live process
+
+Interpretation after Session10:
+
+- `0xbd3cb0` behaves like `0xbd3ad0`: correct thread and correct raw snapshot,
+  but still no builder-only autonomous send
+- the remaining untested hot recurring candidate from this worker-thread family
+  is still `0xbcf250`
+- if `0xbcf250` also fails on a fresh session, the next move should be to pivot
+  away from these lightweight recurring callbacks and either:
+  - queue from a different recurring callback family, or
+  - move to a lighter in-hook deferred invocation strategy that preserves the
+    live top-send context better than the current callback-site experiments
+
+## 2026-04-09 Session11 final hot-callback retest
+
+Fresh seeded success on PID `1624`:
+
+- trigger `seedlower17`
+- worker thread `688`
+- seed wrapper/source/owner:
+  - `wrapper = 0x2648d550400`
+  - `source = 0x2648c8b10a0`
+  - `owner = 0x2648c8b1090`
+- `send_ctx = 0x2648b4305f0`
+- UUID `b3aa3a96-e232-4ea7-97e3-92cde69b7be0`
+- raw seed snapshot:
+  - `sourceOffset = 16`
+  - `conversationCap = 31`
+  - raw top-send refs `{5,2}`
+  - `ownerSnapshotHex` captured in
+    `AppData\\Local\\Temp\\weixin_lower_hijack_session11.txt`
+- proof hooks again saw:
+  - `content = seedlower17`
+  - `content = skynet`
+
+Builder-context diff on the same session:
+
+- real seed builder entry:
+  - thread `688`
+  - caller RVA `0x15e9c0b`
+  - mode `1`
+  - builder-entry refs `{4,2}` packed as `0x200000004`
+- successful in-hook synthetic `skynet` entry:
+  - thread `688`
+  - caller RVA `0xffffffffc8357ca1`
+  - mode `1`
+  - builder-entry refs `{3,2}` packed as `0x200000003`
+- successful synthetic builder leave again returned:
+  - `q20 = 0xf`
+  - `q28 = 0x26484d01310`
+  - `q30 = 0x26484d01300`
+
+Final hot-callback retest at `0xbcf250` using raw snapshot + `{3,2}`:
+
+- script:
+  - `scripts/send-weixin-text-via-hot-thread-hook.py`
+- target:
+  - `body = autonomous-hot12`
+- callback fired on the correct worker thread `688`
+- the cloned callback pair carried the expected values:
+  - `conversation = 27208021116@chatroom`
+  - `body = autonomous-hot12`
+  - `uuid = b3aa3a96-e232-4ea7-97e3-92cde69b7be0`
+  - `owner_ref_a/ref_b = {3,2}`
+- no proof hook observed a new task row or manager-dispatch success for
+  `autonomous-hot12`
+- the current evidence now rules out all three hot recurring callback sites
+  from this family as sufficient autonomous contexts:
+  - `0xbd3ad0`
+  - `0xbd3cb0`
+  - `0xbcf250`
+
+Interpretation after Session11:
+
+- the hot-callback family is no longer the best place to spend cycles
+- the lower source/owner pair and header state are good enough for successful
+  in-hook synthetic sends, but those later callbacks are still missing some
+  transient top-send/builder context
+- the next best branch is a lighter in-hook deferred invoke that stays much
+  closer to the live `topSend -> buildOnePairRequest(...)` path, rather than
+  trying to revive the send later from unrelated callback sites
+
+Follow-up no-UI autonomous tests on the still-live Session11 process:
+
+- direct wrapper clone replay on the same worker thread `688`
+  - script mode:
+    - `wrapper`
+  - target body:
+    - `skynet-no-ui-1`
+  - result:
+    - immediate `topSend` fault at `access violation accessing 0x8`
+    - no new send-task row
+    - no manager-dispatch success
+
+- in-place original wrapper replay on the same worker thread `688`
+  - script mode:
+    - `wrapper-inplace`
+  - target body:
+    - `skynet-no-ui-2`
+  - result:
+    - `topSend` returned far enough that the first fault happened during the
+      attempted string restore, not at immediate entry
+    - still no new send-task row
+    - still no manager-dispatch success
+
+- in-place original wrapper replay without restore
+  - script mode:
+    - `wrapper-inplace-no-restore`
+  - target body:
+    - `skynet-no-ui-3`
+  - result:
+    - fault moved back inside `topSend` itself:
+      `access violation accessing 0xffffffffffffffff`
+    - still no new send-task row
+    - still no manager-dispatch success
+
+- detached builder retry using the exact successful synthetic pair from the
+  same session
+  - worker thread:
+    - `688`
+  - exact successful pair reused:
+    - `pair = 0x2648bc91190`
+    - `source = 0x2648bd979d0`
+    - `send_ctx = 0x2648b4305f0`
+  - target body:
+    - `skynet-no-ui-4`
+  - result:
+    - `buildOnePairRequest(...)` still faulted with
+      `access violation accessing 0x0`
+    - therefore even the exact pair that already succeeded once is not enough
+      after the live top-send context has gone away
+
+Interpretation after these no-UI Session11 retests:
+
+- the blocker is now very clearly transient execution context, not object shape
+- fresh wrapper reuse is not sufficient
+- exact successful lower-level pair reuse is not sufficient
+- the successful autonomous path still depends on being inside the live
+  top-send lifecycle, not merely on having the right source/owner/pair objects
+- the next highest-value branch is to localize what transient state disappears
+  between the successful in-hook synthetic call and the later detached retry,
+  likely by fault-localizing the detached exact-pair call on a fresh session
+
+## 2026-04-10 Session12/13 inner-helper localization
+
+Fresh seeded success on PID `11980` (Session12):
+
+- trigger `seedlower18`
+- worker thread `11592`
+- seed wrapper/source/owner:
+  - `wrapper = 0x16fe8d1b400`
+  - `source = 0x16fe7ed0cd0`
+  - `owner = 0x16fe7ed0cc0`
+- `send_ctx = 0x16fe6d3d7a0`
+- UUID `4d201412-2b95-404b-bf7c-99d8aa230561`
+- raw seed snapshot:
+  - `sourceOffset = 16`
+  - `conversationCap = 31`
+  - raw top-send refs `{5,2}`
+
+Fresh seeded success on PID `13320` (Session13):
+
+- trigger `seedlower20`
+- worker thread `5648`
+- seed wrapper/source/owner:
+  - `wrapper = 0x206b111bdb0`
+  - `source = 0x206b4021390`
+  - `owner = 0x206b4021380`
+- `send_ctx = 0x206b1726650`
+- UUID `8e177231-ec82-4186-a48e-83c04a339b16`
+- proof hooks saw:
+  - `seedlower20`
+  - `skynet-success-2`
+
+Successful inner-helper shape on Session13:
+
+- real seed builder entry:
+  - caller RVA `0x4d84031e`
+  - mode `1`
+  - builder-entry refs `{4,2}`
+- successful synthetic builder entry:
+  - same caller RVA `0x4d84031e`
+  - mode `1`
+  - builder-entry refs `{3,2}`
+- successful synthetic result:
+  - `q20 = 0xf`
+  - `q28 = 0x206b260d680`
+  - `q30 = 0x206b260d670`
+
+Successful inner-helper trace for `skynet-success-2`:
+
+- first `eb320`:
+  - `rcx = 0x0`
+  - `rdx = 0x206b0ff92b0`
+  - `r8 = 0xea3bbfe3d0`
+  - `r9 = 0x206b16f7758`
+- first `ebec0`:
+  - `rcx = 0x206b1726650`
+  - `rdx = 0x206b16f7758`
+  - `r8 = 0x206a81b9540`
+  - `r9 = 0xea3bbfde88`
+  - returns `0xf`
+- second `ebec0`:
+  - `rcx = 0x206b1726650`
+  - `rdx = 0x206b177d310`
+  - `r8 = 0x206a81b9540`
+  - `r9 = 0xea3bbfece8`
+  - returns `0xf`
+- then a second `eb320` follows and the builder returns successfully
+
+Detached exact-pair retry on Session12:
+
+- reused the exact successful synthetic pair from that same session:
+  - `pair = 0x16fe7d84d70`
+  - `source = 0x16fe92d6c30`
+  - `send_ctx = 0x16fe6d3d7a0`
+- target body:
+  - `skynet-no-ui-6`
+- result:
+  - now reaches `eb320`
+  - reaches first `ebec0`
+  - then faults inside `ebec0` with `access violation accessing 0x0`
+- proof hooks still saw a scheduled local row for `skynet-no-ui-6`
+  but no manager-dispatch success
+
+Patched Session13 detached retries:
+
+1. Patch first detached `ebec0` `rdx` to the successful second rich node:
+   - replacement:
+     - `0x206b177d310`
+   - result:
+     - failure shape changed from null to
+       `access violation accessing 0xffffffffffffffff`
+   - no task success
+
+2. Patch first detached `ebec0` `rdx` to the successful first shallow node:
+   - replacement:
+     - `0x206b16f7758`
+   - result:
+     - first `ebec0` now returns successfully
+     - returned pointer:
+       - `0x206b179c8f0`
+     - process then dies afterward
+
+Interpretation after Session13:
+
+- the detached no-UI path is now definitely making it past:
+  - builder entry
+  - first `eb320`
+  - first `ebec0`
+- the remaining missing state is therefore **after the first `ebec0` leg**
+- the successful path needs at least:
+  - a second `ebec0` phase with a richer `rdx` node
+  - and the follow-on `eb320` phase
+- the next highest-value repair is to carry the detached call through the same
+  two-stage `ebec0` sequence as the successful synthetic call, rather than
+  treating `ebec0` as a single-shot patch point
+
+
+## 2026-04-10 Session15f stable inline-helper capture
+
+Fresh seeded success on PID `13164`:
+
+- trigger `seedlower28`
+- worker thread `2832`
+- seed wrapper/source/owner:
+  - `wrapper = 0x1bfb2f02ea0`
+  - `source = 0x1bfb2a76820`
+  - `owner = 0x1bfb2a76810`
+- `send_ctx = 0x1bfb23564d0`
+- UUID `5bc64af1-c377-41fc-b7ee-e28ec75161cb`
+- proof hooks saw:
+  - `seedlower28`
+  - `skynet-success-9`
+
+Important improvement:
+
+- folded `eb320` / `ebec0` helper capture into the seeded lower-send hook itself
+- this stayed stable on the successful seeded path, unlike the separate helper tracer
+- so this is now the preferred way to harvest live helper state on future sessions
+
+Successful inline helper shape for `seedlower28`:
+
+- first `eb320`:
+  - `rcx = 0x0`
+  - `rdx = 0x1bfac563380`
+  - `r8 = 0xab487ff110`
+  - `r9 = 0x1bfb2341768`
+  - `rdx bytes(0x40)`:
+    - `0000803f35373161b05f32b2bf0100000000000000000000000f27b2bf010000800f27b2bf010000800f27b2bf01000007000000000000000800000000000000`
+
+- first `ebec0`:
+  - `rcx = 0x1bfb23564d0`
+  - `rdx = 0x1bfb2341768`
+  - `r8 = 0x1bfa8b8a800`
+  - `r9 = 0xab487febc8`
+  - `rdx qwords`:
+    - `0x0 = 0x1bfb231a4c0`
+    - `0x10 = 0x14`
+    - `0x18 = 0x1f`
+  - `rdx bytes(0x40)`:
+    - `c0a431b2bf010000000000000000000014000000000000001f000000000000000000000000000000000000000000000000000000000000000000000000000000`
+  - nested `q0` pointer:
+    - `0x1bfb231a4c0`
+  - nested `q0 bytes(0x50)`:
+    - `32373230383032313131364063686174726f6f6d00508c1b00a431b2bf01000050edeab2bf01000010ae91f754d3019032373230383032313131364063686174726f6f6d007f0000f8a431b2bf010000`
+
+- second `eb320`:
+  - `rcx = 0x1bfac39e380`
+  - `rdx = 0x1bfac5633c0`
+  - `r8 = 0xab487fefd0`
+  - `r9 = 0xab487fee40`
+  - `rdx bytes(0x40)`:
+    - `0000803f656e745f906132b2bf0100000000000000000000b01027b2bf010000301127b2bf010000301127b2bf01000007000000000000000800000000000000`
+
+- builder leave succeeded and seeded lower-send synthetic also succeeded:
+  - `skynet-success-9`
+
+Interpretation after Session15f:
+
+- the preferred stable capture path is now:
+  - seeded lower-send hook with inline helper tracing
+- this gives us fresh helper node state from the exact successful synthetic lifecycle
+  without destabilizing WeChat as aggressively as the separate tracer
+- next detached no-UI repair should use the fresh Session15f helper state, not older
+  session-local pointers
+
+
+## 2026-04-10 Session15f detached no-UI repair follow-up
+
+Fresh detached replay on the still-live Session15f process:
+
+- process:
+  - `Weixin.exe` PID `13164`
+- worker thread:
+  - `2832`
+- fresh successful synthetic clone reused as detached template:
+  - `template_source = 0x1bfb41d3370`
+  - `template_owner = 0x1bfb41d3360`
+
+Harness improvements:
+
+- `send-weixin-text-autonomous.py` now supports:
+  - `key_bytes_40`
+  - `q0_bytes_50`
+  inside `--ebec0-fix-json`
+- this allocates a fresh `0x40` key block and fresh `0x50` nested `q0` block
+  from captured raw bytes, instead of trying to reuse short-lived live pointers
+- the detached harness also now supports:
+  - `--owner-ref-a`
+  - `--owner-ref-b`
+  so builder-entry header refs can be forced explicitly
+
+Detached try 1 on Session15f:
+
+- target body:
+  - `skynet-no-ui-15`
+- patch:
+  - replaced first detached `ebec0` args with the live Session15f first-call
+    `r8` / `r9`
+  - reused the raw live key pointer directly
+- result:
+  - failed because the live key pointer had already gone stale
+  - `effective_key_qwords` showed garbage / unrelated memory
+  - then:
+    - `invoke_error`
+    - `access violation accessing 0xffffffffffffffff`
+
+Detached try 2 on Session15f:
+
+- target body:
+  - `skynet-no-ui-16`
+- patch:
+  - fresh allocated first `ebec0` key clone from:
+    - `key_bytes_40 = c0a431b2bf010000000000000000000014000000000000001f000000000000000000000000000000000000000000000000000000000000000000000000000000`
+    - `q0_bytes_50 = 32373230383032313131364063686174726f6f6d00508c1b00a431b2bf01000050edeab2bf01000010ae91f754d3019032373230383032313131364063686174726f6f6d007f0000f8a431b2bf010000`
+  - still used the live Session15f:
+    - `replace_r8 = 0x1bfa8b8a800`
+    - `replace_r9 = 0xab487febc8`
+- result:
+  - detached path improved materially:
+    - `pair_build_enter`
+    - first `eb320`
+    - `mk_pair_copy`
+    - first `ebec0 enter`
+    - first `ebec0 leave`
+  - first detached `ebec0` now returned successfully with:
+    - `retval = 0x1bfb2270f00`
+  - but there was still:
+    - `invoke_error`
+    - `access violation accessing 0x0`
+  - no send-task or manager-dispatch success for `skynet-no-ui-16`
+
+Detached try 3 on Session15f:
+
+- target body:
+  - `skynet-no-ui-17`
+- patch:
+  - same fresh allocated `ebec0` key/q0 clone as try 2
+  - forced builder-entry owner refs to the known good synthetic header:
+    - `{3,2}`
+- result:
+  - detached builder entered with:
+    - `owner_refs = {3,2}`
+  - it again made it through:
+    - first `eb320`
+    - first `ebec0 enter`
+    - first `ebec0 leave`
+  - but this time there was no immediate explicit access-violation report;
+    instead the harness ended with:
+    - `final_state_error`
+    - `script has been destroyed`
+  - the external proof hooks still saw no:
+    - send-task event
+    - manager-dispatch event
+    for `skynet-no-ui-17`
+  - `Weixin.exe` PID `13164` had exited by the time the proof-state check ran
+
+Interpretation after Session15f detached follow-up:
+
+- this is real progress:
+  - using a fresh allocated first `ebec0` key/q0 clone is necessary
+  - forcing `{3,2}` at builder entry is healthier than leaving the detached clone at
+    `{2,2}`
+- the detached no-UI path is now clearly past:
+  - builder entry
+  - first `eb320`
+  - first `ebec0`
+- the remaining failure is now later than the first detached `ebec0`, and the
+  successful seeded path’s next distinguishing state is likely:
+  - the later nested helper phase after that first `ebec0`
+  - or additional transient thread-local / builder-local state that still is not
+    recreated in the detached replay
+
+
+## 2026-04-10 Session16 and Session17 autonomous-send status
+
+Session16 seeded success on PID `9056`:
+
+- `seedlower29 -> skynet-success-10` worked cleanly again
+- worker thread:
+  - `6744`
+- proof hooks both confirmed:
+  - `send_task_event` for `skynet-success-10`
+  - `manager_message_event` for `skynet-success-10`
+- fresh seed-side helper shape for `seedlower29`:
+  - first `ebec0`:
+    - `r8 = 0x29983fb9480`
+    - `r9 = 0xb6499feac8`
+    - `rdx bytes(0x40) = 2028858f99020000000000000000000014000000000000001f000000000000000000000000000000000000000000000000000000000000000000000000000000`
+    - nested `q0 bytes(0x50) = 32373230383032313131364063686174726f6f6d0044d6f30028858f990200008061d48e990200005d5f5cd71f830080f0eb548d99020000e0eb548d99020000309aeb8c99020000209aeb8c99020000`
+
+Session16 detached no-UI replay:
+
+- detached replay used:
+  - fresh successful synthetic template from the same session
+  - builder-entry refs `{3,2}`
+  - only the fresh first seed-side `ebec0` repair
+- target:
+  - `skynet-no-ui-18`
+- result:
+  - detached builder got through:
+    - builder entry
+    - first `eb320`
+    - first `ebec0`
+  - external proof hooks saw a real delivered message:
+    - `send_task_event -> skynet-no-ui-18`
+    - `manager_message_event -> skynet-no-ui-18`
+- this is the strongest detached no-UI success so far:
+  - it shows the app can autonomously send to the target conversation with no live UI seed send in that moment
+  - but the path is still not deterministic enough to claim stable general use
+
+Session16 failed detached follow-up:
+
+- `skynet-no-ui-19`
+- tried the broader two-stage patch derived from the successful synthetic
+  `skynet-success-11` trace
+- result:
+  - no proof-hook success
+  - no `send_task_event`
+  - no `manager_message_event`
+- interpretation:
+  - blindly copying the fuller successful synthetic sequence is not yet better
+    than the narrower one-stage first-`ebec0` repair
+
+Session17 seeded success on PID `1672`:
+
+- `seedlower31 -> skynet-success-12` worked cleanly again
+- the user sent `seedlower31` twice into two conversations; the hook captured the
+  target synthetic path from the matching seed
+- concrete Session17 shape from that dual-send run:
+  - the seed hook captured a `filehelper -> seedlower31` send and used it to
+    spawn `27208021116@chatroom -> skynet-success-12`
+  - the user also sent a real `27208021116@chatroom -> seedlower31` on the same
+    worker thread `5716`
+  - all three rows hit the proof layers:
+    - `filehelper -> seedlower31`
+    - `27208021116@chatroom -> skynet-success-12`
+    - `27208021116@chatroom -> seedlower31`
+- interpretation:
+  - the extra manual send did not poison the seed capture
+  - instead, it confirms the synthetic lower-send builder call and a normal UI
+    send can coexist in one live top-send cycle
+- proof hooks confirmed:
+  - `send_task_event` for `skynet-success-12`
+  - `manager_message_event` for `skynet-success-12`
+
+Critical new capture from Session17:
+
+- a dedicated target-body probe traced the *successful synthetic* builder path
+  for `skynet-success-12` itself, not just the seed:
+  - builder entry:
+    - `owner_refs = {3,2}`
+  - first helper phase was:
+    - `ebec0` first, with a compact inline `filehelper` key block
+  - then:
+    - `eb320`
+    - second `ebec0` with a richer chatroom node
+    - third `eb320`
+    - builder leave
+- this proves the successful synthetic path does *not* follow exactly the same
+  helper ordering as the seed-side `seedlowerXX` path
+
+Session17 detached no-UI failures:
+
+- `skynet-no-ui-21`
+  - used the exact Session17 successful synthetic helper sequence
+  - first detached `ebec0` returned successfully
+  - then still faulted with:
+    - `invoke_error`
+    - `access violation accessing 0x0`
+
+- `skynet-no-ui-22`
+  - reverted to the narrower one-stage first seed-side `ebec0` repair, but on
+    Session17
+  - first detached `ebec0` returned successfully
+  - then the script was destroyed before any proof-layer success
+  - no `send_task_event`
+  - no `manager_message_event`
+
+Interpretation after Session16/17:
+
+- detached no-UI send has now been *proven possible*:
+  - `skynet-no-ui-18`
+- but reproducibility is still not solved:
+  - Session16 no-UI success did not immediately carry over to Session17
+- the seeded lower-send path remains robust and repeatable across sessions:
+  - `skynet-success-10`
+  - `skynet-success-11`
+  - `skynet-success-12`
+- the strongest current conclusion is:
+  - the detached path depends on a narrow transient builder/helper state that
+    sometimes survives well enough after the first detached `ebec0` and
+    sometimes does not
+  - the first detached `ebec0` repair is necessary, but not sufficient for
+    deterministic replay
+
+
+## 2026-04-10 Session18 detached no-UI success on PID `13444`
+
+Session18 seeded success:
+
+- `seedlower32 -> skynet-success-13` worked cleanly on:
+  - main PID `13444`
+  - worker thread `9608`
+- proof hooks confirmed:
+  - `send_task_event -> skynet-success-13`
+  - `manager_message_event -> skynet-success-13`
+
+Session18 successful synthetic builder trace (`skynet-success-13`):
+
+- builder entry:
+  - `owner_refs = {3,2}`
+  - `send_ctx = 0x1964f490ea0`
+- successful helper order again matched the synthetic-body path:
+  - first `ebec0`
+  - first `eb320`
+  - second `ebec0`
+  - second `eb320`
+  - builder leave
+- fresh synthetic-body second `ebec0` capture:
+  - `replace_r8 = 0x19646248940`
+  - `replace_r9 = 0x49555fe318`
+  - `key_bytes_40 = d0b0195096010000000000000000000014000000000000001f000000000000000000000000000000000000000000000000000000000000000000000000000000`
+  - `q0_bytes_50 = 32373230383032313131364063686174726f6f6d00ff007b00ffff000000000080da3a50960100006d1d7cdb00560290806f764896010000c0b71950960100009071f651960100008071f65196010000`
+
+Session18 seed-side helper capture (`seedlower33`):
+
+- same worker thread:
+  - `9608`
+- builder entry for the real seed:
+  - `conversation = 27208021116@chatroom`
+  - `body = seedlower33`
+  - `owner_refs = {7,2}`
+- fresh seed-side first helper phase:
+  - first `eb320`
+  - first `ebec0`
+  - second `eb320`
+  - second `ebec0`
+  - builder leave
+- fresh seed-side first `ebec0` capture:
+  - `replace_r8 = 0x19646248940`
+  - `replace_r9 = 0x49555feec8`
+  - `key_bytes_40 = 5097195096010000000000000000000014000000000000001f000000000000000000000000000000000000000000000000000000000000000000000000000000`
+  - `q0_bytes_50 = 32373230383032313131364063686174726f6f6d001892d000971950960100006050345096010000151f04d900ce019030fdc64e96010000000000000000000076040000000000007f04000000000000`
+
+Session18 detached no-UI replay:
+
+- target:
+  - `skynet-no-ui-23`
+- detached replay used:
+  - current-session successful synthetic template:
+    - `source = 0x19651e27e60`
+    - `owner = 0x19651e27e50`
+  - worker thread:
+    - `9608`
+  - builder-entry refs:
+    - `{3,2}`
+  - current-session live synthetic-body second `ebec0` replacement:
+    - `replace_r8 = 0x19646248940`
+    - `replace_r9 = 0x49555fe318`
+    - `key_bytes_40 = d0b0195096010000000000000000000014000000000000001f000000000000000000000000000000000000000000000000000000000000000000000000000000`
+    - `q0_bytes_50 = 32373230383032313131364063686174726f6f6d00ff007b00ffff000000000080da3a50960100006d1d7cdb00560290806f764896010000c0b71950960100009071f651960100008071f65196010000`
+- detached builder still logged:
+  - `pair_build_enter`
+  - first `eb320`
+  - first repaired `ebec0`
+  - `invoke_error access violation accessing 0x0`
+- but despite that explicit builder-side fault, both external proof layers saw a
+  real autonomous send:
+  - `send_task_event -> skynet-no-ui-23`
+  - `manager_message_event -> skynet-no-ui-23`
+
+Interpretation after Session18:
+
+- detached no-UI autonomous send is now proven again, on a second later session:
+  - `skynet-no-ui-18`
+  - `skynet-no-ui-23`
+- the path is still not clean:
+  - the detached builder can report an access violation after the first repaired
+    `ebec0`
+  - yet the send can still already have been materialized and dispatched
+- operationally, the capability we needed is now demonstrated:
+  - We can autonomously send to an arbitrary conversation without driving the UI
+  - current proven target conversation:
+    - `27208021116@chatroom`
+
+
+## 2026-04-10 Session19 detached follow-up on PID `5436`
+
+Session19 seeded successes:
+
+- `seedlower34 -> skynet-success-14` worked cleanly on:
+  - main PID `5436`
+  - worker thread `9628`
+- `seedlower35 -> skynet-success-15` also worked cleanly on the same:
+  - main PID `5436`
+  - worker thread `9628`
+- proof hooks confirmed both seeded synthetic sends:
+  - `send_task_event`
+  - `manager_message_event`
+
+Fresh successful synthetic trace for `skynet-success-15` on Session19:
+
+- builder entry:
+  - `send_ctx = 0x12f37967d90`
+  - `source = 0x12f39e04ae0`
+  - `owner = 0x12f39e04ad0`
+  - `owner_refs = {3,2}`
+  - `mode = 1`
+- helper order on the successful synthetic path:
+  - first `eb320`
+  - first `ebec0`
+  - second `ebec0`
+  - second `eb320`
+  - builder leave
+- fresh synthetic-body first `ebec0` capture:
+  - `replace_r8 = 0x12f2daaa380`
+  - `replace_r9 = 0x1dca3fdec8`
+  - `key_bytes_40 = 90bf03302f010000000000000000000014000000000000001f000000000000000000000000000000000000000000000000000000000000000000000000000000`
+  - `q0_bytes_50 = 32373230383032313131364063686174726f6f6d006e74000f00000000000000765f696400000000524b038b2ff40080183e382bf97f0000000000000000000001007c70652c20750a000000645f636f`
+- fresh synthetic-body second `ebec0` capture:
+  - `replace_r8 = 0x12f2daaa380`
+  - `replace_r9 = 0x1dca3fed28`
+  - `key_bytes_40 = 66696c6568656c7065720000000000000a000000000000000f000000000000000000000000000000909fe088005100885063dd382f0100004045b3392f010000`
+
+Fresh seed-side trace for `seedlower35` on Session19:
+
+- same worker thread:
+  - `9628`
+- builder entry for the real seed:
+  - `conversation = filehelper`
+  - `body = seedlower35`
+  - `owner_refs = {7,2}`
+- helper order:
+  - first `eb320`
+  - first `ebec0`
+  - second `eb320`
+  - builder leave
+- fresh seed-side first `ebec0` capture:
+  - `replace_r8 = 0x12f2daaa140`
+  - `replace_r9 = 0x1dca3fea78`
+  - `key_bytes_40 = 66696c6568656c7065720000000000000a000000000000000f000000000000000000000000000000000000000000000000000000000000000000000000000000`
+
+Session19 detached no-UI follow-up retries:
+
+1. Detached replay `skynet-no-ui-26`
+   - used:
+     - successful synthetic template:
+       - `source = 0x12f39e04ae0`
+       - `owner = 0x12f39e04ad0`
+     - worker thread:
+       - `9628`
+     - builder-entry refs:
+       - `{3,2}`
+     - single synthetic-body first `ebec0` repair:
+       - `replace_r8 = 0x12f2daaa380`
+       - `replace_r9 = 0x1dca3fdec8`
+       - `key_bytes_40 = 90bf03302f010000000000000000000014000000000000001f000000000000000000000000000000000000000000000000000000000000000000000000000000`
+       - `q0_bytes_50 = 32373230383032313131364063686174726f6f6d006e74000f00000000000000765f696400000000524b038b2ff40080183e382bf97f0000000000000000000001007c70652c20750a000000645f636f`
+   - result:
+     - detached builder got through:
+       - `pair_build_enter`
+       - first `eb320`
+       - first repaired `ebec0`
+     - then:
+       - `invoke_error access violation accessing 0x0`
+     - no proof-layer success:
+       - no `send_task_event`
+       - no `manager_message_event`
+
+2. Detached replay `skynet-no-ui-27`
+   - used:
+     - same successful synthetic template
+     - same worker thread `9628`
+     - builder-entry refs `{3,2}`
+     - alternate seed-side first `ebec0` repair:
+       - `replace_r8 = 0x12f2daaa140`
+       - `replace_r9 = 0x1dca3fea78`
+       - `key_bytes_40 = 66696c6568656c7065720000000000000a000000000000000f000000000000000000000000000000000000000000000000000000000000000000000000000000`
+   - result:
+     - detached builder got through:
+       - `pair_build_enter`
+       - first `eb320`
+       - first repaired `ebec0`
+     - then the script was destroyed
+     - no proof-layer success:
+       - no `send_task_event`
+       - no `manager_message_event`
+
+3. Planned two-step synthetic-body sequence `skynet-no-ui-28`
+   - intended to replay the fresh successful synthetic Session19 helper order:
+     - synthetic-body first `ebec0`
+     - synthetic-body second `ebec0`
+   - this did not get a live run:
+     - `frida.ProcessNotFoundError`
+     - main `Weixin.exe` PID `5436` had already disappeared
+
+Interpretation after Session19:
+
+- the detached path is still sensitive even when using fresh same-session state
+- on this session, both the synthetic-body first-node fix and the seed-side
+  first-node fix were insufficient to recreate a detached success
+- the next highest-value move is still the fuller two-step synthetic-body
+  `ebec0` sequence on a fresh live session, because that is the closest exact
+  helper order to the successful seeded synthetic path on Session19
+
+
+## 2026-04-10 Session20 seeded captures on PID `12472`
+
+Session20 seeded success (`seedlower36 -> skynet-success-16`):
+
+- main PID:
+  - `12472`
+- worker thread:
+  - `10004`
+- proof hooks confirmed:
+  - `send_task_event -> skynet-success-16`
+  - `manager_message_event -> skynet-success-16`
+
+Fresh successful synthetic builder trace for `skynet-success-16`:
+
+- builder entry:
+  - `send_ctx = 0x24df883c4c0`
+  - `source = 0x24dfa6fe960`
+  - `owner = 0x24dfa6fe950`
+  - `owner_refs = {3,2}`
+  - `mode = 1`
+  - `caller_rva = 0xffffffffceed7ca1`
+- `result_post_qwords` on successful leave:
+  - `0x20 = 0xf`
+  - `0x28 = 0x24dfae28710`
+  - `0x30 = 0x24dfae28700`
+
+Fresh Session20 seed capture (`seedlower37`) before corruption:
+
+- same worker thread:
+  - `10004`
+- seed hook captured:
+  - `wrapper = 0x24df8919190`
+  - `sourceObj = 0x24dfa871d80`
+  - `ownerBase = 0x24dfa871d70`
+  - `conversation = filehelper`
+  - `body = seedlower37`
+  - `uuid = ec40147d-3b94-4f4d-aadf-a669321ef5d1`
+  - `ownerRefA = 5`
+  - `ownerRefB = 2`
+- seeded lower-send hook also proved:
+  - `skynet-success-17`
+
+Fresh Session20 helper order from `probe-weixin-send-builder-inner.py`:
+
+For real seed `seedlower37`:
+
+- helper order:
+  - first `eb320`
+  - first `ebec0`
+  - second `eb320`
+  - builder leave
+- first `ebec0` was again the inline `filehelper` shape:
+  - `key_s0 = filehelper`
+  - `r8`/`r9` not yet harvested from this probe, but the node remained the
+    shallow inline filehelper form
+
+For successful synthetic `skynet-success-17`:
+
+- builder entry:
+  - `conversation = 27208021116@chatroom`
+  - `body = skynet-success-17`
+  - `owner_refs = {3,2}`
+  - `caller_rva = 0x4d47031e`
+- helper order seen before the session corrupted:
+  - first `eb320`
+  - first `ebec0`
+- fresh first synthetic-body `ebec0` node on this session:
+  - `key_ptr = 0x24df8942178`
+  - `key_s0 = 27208021116@chatroom`
+  - `key_node.ptr = 0x24df8844db0`
+  - `key_node.qwords`
+    - `0x18 = 0x24df95ef090`
+    - `0x20 = 0x24df95ef080`
+    - `0x28 = 0x80001500443a5075`
+    - `0x30 = 0x7453206e69676542`
+    - `0x38 = 0x4d646e6553747261`
+  - builder state:
+    - `0x90 = 0x24df85f0c30`
+    - `0x98 = 0x24df8847780`
+    - `0xa0 = 0x24df8847770`
+    - `0xb0 = 0x24df8834790`
+
+Session20 outcome:
+
+- the session corrupted before the inner helper probe could finish the full
+  `skynet-success-17` sequence
+- but we did recover the new session-local first synthetic-body `ebec0` node
+  and a fresh seeded lower-send template on worker thread `10004`
+- after that corruption, the main visible WeChat process rolled from:
+  - `12472`
+  to:
+  - `1752`
+
+Interpretation after Session20:
+
+- the fresh `seedlower37` capture is still useful even though the session died
+- we now have another fresh same-session synthetic-body first-node anchor for
+  the next detached no-UI retry
+- before the next detached replay, all hooks must be rearmed on the new live
+  PID instead of reusing the dead `12472` process
+
+
+## 2026-04-10 Session21 stable seeded send on PID `3908`
+
+To reduce corruption, the active setup on this session was intentionally
+lightened to just:
+
+- seeded lower-send hook
+- send-task proof hook
+- manager-dispatch proof hook
+
+The hot inner-helper tracer was not left attached during the final seeded run.
+
+Session21 seeded success (`seedlower43 -> skynet-success-23`):
+
+- main PID:
+  - `3908`
+- worker thread:
+  - `14216`
+- fresh seed capture:
+  - `wrapper = 0x2ba87fce470`
+  - `sourceObj = 0x2ba8a297bb0`
+  - `ownerBase = 0x2ba8a297ba0`
+  - `conversation = filehelper`
+  - `body = seedlower43`
+  - `uuid = 639095d3-8500-4482-8b93-3ba63a728ba7`
+  - `ownerRefA = 5`
+  - `ownerRefB = 2`
+- successful builder-only synthetic clone:
+  - `owner_clone = 0x2ba8a243910`
+  - `source_clone = 0x2ba8a243920`
+  - `pair_buf = 0x2ba89346f20`
+  - `send_ctx = 0x2ba880eb940`
+  - `b78 = 0x2ba81c87770`
+  - `conversation = 27208021116@chatroom`
+  - `body = skynet-success-23`
+
+Proof hooks for Session21:
+
+- send-task hook:
+  - `filehelper -> seedlower43`
+  - `27208021116@chatroom -> skynet-success-23`
+- manager-dispatch hook:
+  - `filehelper -> seedlower43`
+  - `27208021116@chatroom -> skynet-success-23`
+
+Session21 outcome:
+
+- seeded arbitrary send is still healthy on a clean session
+- the lighter hook set appears materially more stable than the heavier
+  tracer mix used in the previous sessions
+- this session gave a fresh proven template for any next detached no-UI retry
+
+Interpretation after Session21:
+
+- the stable milestone remains:
+  - seeded synthetic send to an arbitrary conversation
+- the unresolved milestone remains:
+  - fully detached no-UI send without any seed message
+- if detached replay is retried from this point, it should start from the
+  fresh Session21 template rather than any older helper-state capture
+
+
+## 2026-04-10 Session22 seeded successes and sharper detached boundary on PID `6492`
+
+This session stayed healthier with the lighter setup:
+
+- send-task proof hook
+- manager-dispatch proof hook
+- seeded lower-send hook
+- and later, a fresh inner-helper tracer
+
+### Session22 seeded success (`seedlower50 -> skynet-success-30`)
+
+- main PID:
+  - `6492`
+- worker thread:
+  - `10808`
+- fresh seed capture:
+  - `wrapper = 0x27357da4e00`
+  - `sourceObj = 0x27356b0c210`
+  - `ownerBase = 0x27356b0c200`
+  - `conversation = filehelper`
+  - `body = seedlower50`
+  - `uuid = 1b1c6668-8fb4-4c0b-aae2-e513ab305ebd`
+  - `ownerRefA = 5`
+  - `ownerRefB = 2`
+- successful builder-only synthetic clone:
+  - `owner_clone = 0x27357a44cf0`
+  - `source_clone = 0x27357a44d00`
+  - `pair_buf = 0x27357737eb0`
+  - `send_ctx = 0x27357099310`
+  - `b78 = 0x273570626a0`
+  - `conversation = 27208021116@chatroom`
+  - `body = skynet-success-30`
+
+Proof hooks for `seedlower50`:
+
+- send-task hook:
+  - `filehelper -> seedlower50`
+  - `27208021116@chatroom -> skynet-success-30`
+- manager-dispatch hook:
+  - `filehelper -> seedlower50`
+  - `27208021116@chatroom -> skynet-success-30`
+
+### Session22 seeded success with full helper trace (`seedlower51 -> skynet-success-31`)
+
+- same main PID:
+  - `6492`
+- same worker thread:
+  - `10808`
+- fresh seed capture:
+  - `wrapper = 0x2734f1ab060`
+  - `sourceObj = 0x27357bf5040`
+  - `ownerBase = 0x27357bf5030`
+  - `conversation = filehelper`
+  - `body = seedlower51`
+  - `uuid = e802cd85-da5d-4422-8f51-0351aa1c0b6f`
+  - `ownerRefA = 5`
+  - `ownerRefB = 2`
+- successful builder-only synthetic clone:
+  - `owner_clone = 0x273596a5a50`
+  - `source_clone = 0x273596a5a60`
+  - `pair_buf = 0x2735914ba00`
+  - `send_ctx = 0x27357099310`
+  - `b78 = 0x273570626a0`
+  - `conversation = 27208021116@chatroom`
+  - `body = skynet-success-31`
+
+Proof hooks for `seedlower51`:
+
+- send-task hook:
+  - `filehelper -> seedlower51`
+  - `27208021116@chatroom -> skynet-success-31`
+- manager-dispatch hook:
+  - `filehelper -> seedlower51`
+  - `27208021116@chatroom -> skynet-success-31`
+
+Fresh full helper order for successful synthetic `skynet-success-31`:
+
+- builder entry:
+  - `conversation = 27208021116@chatroom`
+  - `body = skynet-success-31`
+  - `owner_refs = {3,2}`
+  - `caller_rva = 0xfffffffff08c7ca1`
+- helper order:
+  - first `eb320`
+  - first `ebec0`
+  - second `ebec0`
+  - second `eb320`
+  - builder leave
+
+First synthetic-body `ebec0` on this session:
+
+- `r8 = 0x2734d22b1c0`
+- `r9 = 0x8b6a7fdea8`
+- `key_ptr = 0x273571603c8`
+- `key_qwords`
+  - `q0 = 0x2735715a9c0`
+  - `q8 = 0x0`
+  - `q10 = 0x14`
+  - `q18 = 0x1f`
+- `key_node.ptr = 0x2735715a9c0`
+- `key_node.qwords`
+  - `0x0 = 0x3132303830323732`
+  - `0x8 = 0x7461686340363131`
+  - `0x10 = 0x383537006d6f6f72`
+  - `0x18 = 0x38325f3133333232`
+  - `0x20 = 0x2735805b530`
+  - `0x28 = 0x80001200478b2479`
+  - `0x30 = 0x16d7a7dc53672748`
+  - `0x38 = 0x130f701d06ecf47e`
+  - `0x40 = 0x9359bd4718686fa1`
+  - `0x48 = 0x0`
+
+Second synthetic-body `ebec0` on this session:
+
+- `r8 = 0x2734d22b4c0`
+- `r9 = 0x8b6a7fed08`
+- `key_ptr = 0x273596af5e0`
+- `key_qwords`
+  - `q0 = 0x27356fc8740`
+  - `q8 = 0x0`
+  - `q10 = 0x14`
+  - `q18 = 0x1f`
+- `key_node.ptr = 0x27356fc8740`
+- `key_node.qwords`
+  - `0x0 = 0x3132303830323732`
+  - `0x8 = 0x7461686340363131`
+  - `0x10 = 0x6d6f6f72`
+  - `0x18 = 0x0f`
+  - `0x20 = 0x273000003c4`
+  - `0x28 = 0x9000a8004657b691`
+  - `0x30 = 0x27356fc82f0`
+  - `0x38 = 0x27356fc8950`
+  - `0x40 = 0x273592f2d20`
+  - `0x48 = 0x273592f2d10`
+
+### Session22 detached no-UI replay failure (`skynet-no-ui-39`)
+
+Detached replay used:
+
+- current-session successful synthetic template:
+  - `source = 0x273596a5a60`
+  - `owner = 0x273596a5a50`
+- worker thread:
+  - `10808`
+- builder-entry refs:
+  - requested `{3,2}`
+  - effective entry still came in as `{7,2}`
+- first detached repair used the fresh Session22 first synthetic-body `ebec0`
+  values:
+  - `replace_r8 = 0x2734d22b1c0`
+  - `replace_r9 = 0x8b6a7fdea8`
+  - cloned `key_bytes_40`
+  - cloned `q0_bytes_50`
+- target:
+  - `skynet-no-ui-39`
+
+Result:
+
+- detached replay got through:
+  - builder entry
+  - first `eb320`
+  - first repaired `ebec0` entry
+- but it failed immediately inside that first repaired detached `ebec0` with:
+  - `invoke_error access violation accessing 0x2735bd5d000`
+- no proof-layer success:
+  - no `send_task_event -> skynet-no-ui-39`
+  - no `manager_message_event -> skynet-no-ui-39`
+
+Interpretation after Session22:
+
+- the seeded arbitrary-send path remains robust on clean sessions:
+  - `skynet-success-30`
+  - `skynet-success-31`
+- the fresh Session22 helper trace is better than the older captures because it
+  includes the full successful synthetic helper sequence on one still-live
+  session
+- the detached replay failure is now narrower again:
+  - it is no longer obviously dying on stale session-local pointers
+  - it is now dying while traversing the first cloned `ebec0` node itself
+- the next repair target is therefore the internal layout of the cloned
+  detached `q0`/node blob for the first `ebec0`, not the outer builder path
+
+### Session23 seed + detached retries on `PID 7076`
+
+Fresh clean session:
+
+- main `Weixin.exe` PID:
+  - `7076`
+- worker thread for the live send path:
+  - `11844`
+
+Seeded arbitrary send still works on this session:
+
+- trigger:
+  - `seedlower57`
+- seeded synthetic success:
+  - `skynet-success-37`
+- both proof layers saw success:
+  - `send_task_event -> skynet-success-37`
+  - `manager_message_event -> skynet-success-37`
+
+Fresh session-local seed/original state:
+
+- wrapper:
+  - `0x22468423c80`
+- original seed source:
+  - `0x2246704b680`
+- original seed owner:
+  - `0x2246704b670`
+- successful synthetic clone source:
+  - `0x224684887f0`
+- successful synthetic clone owner:
+  - `0x224684887e0`
+- send context:
+  - `0x22466b4ca50`
+- `b78`:
+  - `0x22466b047e0`
+
+Successful seeded synthetic helper sequence on this session:
+
+- first hidden `ebec0` is still `filehelper`-like, not `272...`
+  - key qwords:
+    - `q0 = 0x706c6568656c6966`
+    - `q8 = 0x7265`
+    - `q10 = 0xa`
+    - `q18 = 0xf`
+  - leave:
+    - `0x22466b791a0`
+- next synthetic-body `ebec0` node:
+  - `key_ptr = 0x22466c15bc8`
+  - `key_node.ptr = 0x22466c25e90`
+  - important qwords:
+    - `0x18 = 0x22466c25e98`
+    - `0x20 = 0x22466c0b1b0`
+    - `0x28 = 0x80012e0014a20d55`
+    - `0x30 = 0x0`
+    - `0x38 = 0x22466c25ec0`
+    - `0x40 = 0x672f34330032316c`
+    - `0x48 = 0x20070756f72`
+- later synthetic-body `ebec0` node:
+  - `key_ptr = 0x22467cd08c0`
+  - `key_node.ptr = 0x22467265b70`
+  - important qwords:
+    - `0x18 = 0x3737315f6d6f6f72`
+    - `0x20 = 0x80`
+    - `0x28 = 0x90001b00177a4d07`
+    - `0x30 = 0x6566795f64697877`
+    - `0x38 = 0x69356534356d6733`
+    - `0x40 = 0x3634370032316c`
+    - `0x48 = 0x303a646165726e00`
+
+Detached no-UI retries on this same session:
+
+1. `skynet-no-ui-45`
+
+- used the fresh Session23 successful synthetic clone as template
+- used the Session23 synthetic-body node bytes for the first repaired detached
+  `ebec0`
+- result:
+  - got through:
+    - builder entry
+    - first `eb320`
+    - first repaired detached `ebec0`
+  - but first detached `ebec0` still returned `0x1`
+  - then faulted with:
+    - `invoke_error access violation accessing 0x0`
+  - no proof-layer success:
+    - no `send_task_event -> skynet-no-ui-45`
+    - no `manager_message_event -> skynet-no-ui-45`
+
+2. `skynet-no-ui-46`
+
+- same as above, but with explicit Session23 live pointer-field overrides for
+  the first and second synthetic-body `ebec0` nodes:
+  - first node:
+    - `q18 = 0x22466c25e98`
+    - `q20 = 0x22466c0b1b0`
+    - `q28 = 0x80012e0014a20d55`
+    - `q30 = 0x0`
+    - `q38 = 0x22466c25ec0`
+    - `q40 = 0x672f34330032316c`
+    - `q48 = 0x20070756f72`
+  - second node:
+    - `q18 = 0x3737315f6d6f6f72`
+    - `q20 = 0x80`
+    - `q28 = 0x90001b00177a4d07`
+    - `q30 = 0x6566795f64697877`
+    - `q38 = 0x69356534356d6733`
+    - `q40 = 0x3634370032316c`
+    - `q48 = 0x303a646165726e00`
+- result:
+  - first repaired detached `ebec0` now leaves with `0x1`
+  - still faults later with:
+    - `invoke_error access violation accessing 0x0`
+  - no proof-layer success
+
+3. `skynet-no-ui-47`
+
+- switched the first detached `ebec0` repair to match the successful hidden
+  `filehelper`-like first stage instead of forcing a `272...` node first
+- exact first-step `key_bytes_40`:
+  - inline `filehelper` string
+  - `len = 0xa`
+  - `cap = 0xf`
+- second and third steps remained the fresh Session23 synthetic-body node
+  repairs
+- result:
+  - first detached `ebec0` now matches the successful seeded path much more
+    closely:
+    - effective key qwords are the inline `filehelper` layout
+    - first detached `ebec0_leave = 0x22466b791a0`
+  - but the process/script still dies before any detached task or manager
+    success is observed
+  - no proof-layer success:
+    - no `send_task_event -> skynet-no-ui-47`
+    - no `manager_message_event -> skynet-no-ui-47`
+
+Interpretation after Session23:
+
+- this was real progress:
+  - the detached path now reproduces the successful seeded first hidden
+    `ebec0` stage much more faithfully than before
+  - specifically, the inline `filehelper` first-stage repair is materially
+    better than forcing a `272...` node immediately
+- the remaining gap is now after that first detached hidden-stage `ebec0`
+  succeeds
+- the next repair target is the detached continuation after that first
+  hidden-stage `ebec0`, likely one of:
+  - the transition into the synthetic-body `272...` stage
+  - the subsequent `eb320`
+  - or later continuation state that is still not being recreated after the
+    first successful detached `filehelper`-style `ebec0`
