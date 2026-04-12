@@ -70,3 +70,5 @@ examples/file/*
 examples/media/*
 
 releases/*
+
+*/__pycache__/*
